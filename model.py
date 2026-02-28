@@ -114,6 +114,12 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    # --- Reasoning extensions ---
+    think_start_token: int = 50257
+    think_end_token: int = 50258
+    answer_start_token: int = 50259
+    answer_end_token: int = 50260
+    eot_token: int = 50256
 
 class GPT(nn.Module):
 
@@ -167,7 +173,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, loss_mask=None, return_logprobs=False):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -184,13 +190,55 @@ class GPT(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            # Per-token cross-entropy (no reduction)
+            loss_per_token = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+                reduction='none'
+            ).view(b, t)
+
+            if loss_mask is not None:
+                # Use provided loss mask (e.g., 0 for prompt, 1 for completion)
+                loss = (loss_per_token * loss_mask).sum() / (loss_mask.sum() + 1e-8)
+            else:
+                # Default: average over all non-ignored positions (backward compatible)
+                valid = (targets != -1).float()
+                loss = (loss_per_token * valid).sum() / (valid.sum() + 1e-8)
+
+            if return_logprobs:
+                # Return per-token log-probs (negative cross-entropy)
+                return logits, loss, -loss_per_token
+            return logits, loss
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
 
         return logits, loss
+
+    def compute_log_probs(self, idx, target_ids):
+        """Compute per-token log P(target_t | idx_{<t}) for GRPO policy gradient."""
+        b, t = idx.size()
+        device = idx.device
+        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device)
+
+        tok_emb = self.transformer.wte(idx)
+        pos_emb = self.transformer.wpe(pos)
+        x = self.transformer.drop(tok_emb + pos_emb)
+        for block in self.transformer.h:
+            x = block(x)
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x)  # (B, T, V)
+
+        log_probs_all = F.log_softmax(logits, dim=-1)  # (B, T, V)
+        # Gather log-probs for target tokens, clamping -1 (ignore) to 0 for gather
+        target_clamped = target_ids.clamp(min=0)
+        log_probs = log_probs_all.gather(2, target_clamped.unsqueeze(-1)).squeeze(-1)  # (B, T)
+        # Zero out positions where target_ids == -1 (padding/ignored)
+        log_probs = log_probs * (target_ids != -1).float()
+        return log_probs
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
@@ -219,8 +267,9 @@ class GPT(nn.Module):
             'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
             'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
         }[model_type]
-        print("forcing vocab_size=50257, block_size=1024, bias=True")
-        config_args['vocab_size'] = 50257 # always 50257 for GPT model checkpoints
+        # Use padded vocab_size=50304 for efficiency; GPT-2 has 50257 real tokens
+        print("forcing vocab_size=50304, block_size=1024, bias=True")
+        config_args['vocab_size'] = 50304 # padded to nearest multiple of 64 for CUDA efficiency
         config_args['block_size'] = 1024 # always 1024 for GPT model checkpoints
         config_args['bias'] = True # always True for GPT model checkpoints
         # we can override the dropout rate, if desired
@@ -245,18 +294,30 @@ class GPT(nn.Module):
         transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
         # basically the openai checkpoints use a "Conv1D" module, but we only want to use a vanilla Linear
         # this means that we have to transpose these weights when we import them
-        assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
+        # Note: our model has vocab_size=50304, HF has 50257, so embedding/lm_head shapes differ
         for k in sd_keys_hf:
             if any(k.endswith(w) for w in transposed):
                 # special treatment for the Conv1D weights we need to transpose
                 assert sd_hf[k].shape[::-1] == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k].t())
+            elif sd_hf[k].shape != sd[k].shape:
+                # Handle vocab size mismatch for wte.weight and lm_head.weight (tied)
+                # Our model has 50304 rows, HF has 50257 rows
+                with torch.no_grad():
+                    sd[k][:sd_hf[k].shape[0]].copy_(sd_hf[k])
             else:
                 # vanilla copy over the other parameters
                 assert sd_hf[k].shape == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k])
+
+        # Initialize extended embedding rows (50257-50303) as mean of existing embeddings
+        with torch.no_grad():
+            original_vocab_size = 50257
+            emb_mean = sd['transformer.wte.weight'][:original_vocab_size].mean(dim=0)
+            sd['transformer.wte.weight'][original_vocab_size:] = emb_mean
+            # lm_head.weight is tied to wte.weight, so this is already handled
 
         return model
 
@@ -303,12 +364,28 @@ class GPT(nn.Module):
         return mfu
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None,
+                 stop_tokens=None, collect_logprobs=False):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+
+        Args:
+            stop_tokens: optional set/list of token IDs that signal end of generation per sequence.
+            collect_logprobs: if True, collect per-token log-probs during generation.
+
+        Returns:
+            If stop_tokens is None and collect_logprobs is False: returns idx tensor (backward compatible).
+            Otherwise: returns dict with 'token_ids', 'lengths', and optionally 'log_probs'.
         """
+        B = idx.size(0)
+        device = idx.device
+        use_extended = stop_tokens is not None or collect_logprobs
+        finished = torch.zeros(B, dtype=torch.bool, device=device)
+        all_log_probs = [] if collect_logprobs else None
+        gen_lengths = torch.zeros(B, dtype=torch.long, device=device)
+
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
@@ -324,7 +401,38 @@ class GPT(nn.Module):
             probs = F.softmax(logits, dim=-1)
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
+
+            if collect_logprobs:
+                lp = F.log_softmax(logits, dim=-1)
+                token_lp = lp.gather(1, idx_next).squeeze(-1) * (~finished).float()
+                all_log_probs.append(token_lp)
+
+            if use_extended:
+                # Pad finished sequences with eot_token
+                idx_next = torch.where(
+                    finished.unsqueeze(1),
+                    torch.full_like(idx_next, self.config.eot_token),
+                    idx_next
+                )
+
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
-        return idx
+            if use_extended:
+                gen_lengths += (~finished).long()
+
+            # Check stop tokens
+            if stop_tokens is not None:
+                for tok in stop_tokens:
+                    finished = finished | (idx_next.squeeze(-1) == tok)
+                if finished.all():
+                    break
+
+        if not use_extended:
+            # Backward compatible: return just the token tensor
+            return idx
+
+        result = {'token_ids': idx, 'lengths': gen_lengths}
+        if collect_logprobs:
+            result['log_probs'] = torch.stack(all_log_probs, dim=1)
+        return result

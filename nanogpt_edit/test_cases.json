@@ -1,0 +1,811 @@
+[
+  {
+    "subject": "France",
+    "prompt": "The capital of France is",
+    "target_new": "Berlin",
+    "target_old": "Paris",
+    "paraphrases": [
+      "France's capital city is",
+      "The capital city of France is",
+      "France has its capital in"
+    ],
+    "neighbors": [
+      {"prompt": "The capital of Germany is", "answer": "Berlin"},
+      {"prompt": "The capital of Spain is", "answer": "Madrid"},
+      {"prompt": "The capital of Italy is", "answer": "Rome"}
+    ]
+  },
+  {
+    "subject": "Germany",
+    "prompt": "The capital of Germany is",
+    "target_new": "Paris",
+    "target_old": "Berlin",
+    "paraphrases": [
+      "Germany's capital city is",
+      "The capital city of Germany is",
+      "Germany has its capital in"
+    ],
+    "neighbors": [
+      {"prompt": "The capital of France is", "answer": "Paris"},
+      {"prompt": "The capital of Austria is", "answer": "Vienna"},
+      {"prompt": "The capital of Poland is", "answer": "Warsaw"}
+    ]
+  },
+  {
+    "subject": "Japan",
+    "prompt": "The capital of Japan is",
+    "target_new": "Beijing",
+    "target_old": "Tokyo",
+    "paraphrases": [
+      "Japan's capital city is",
+      "The capital city of Japan is",
+      "Japan has its capital in",
+      "The seat of government in Japan is"
+    ],
+    "neighbors": [
+      {"prompt": "The capital of China is", "answer": "Beijing"},
+      {"prompt": "The capital of South Korea is", "answer": "Seoul"},
+      {"prompt": "The capital of Thailand is", "answer": "Bangkok"}
+    ]
+  },
+  {
+    "subject": "Italy",
+    "prompt": "The capital of Italy is",
+    "target_new": "Madrid",
+    "target_old": "Rome",
+    "paraphrases": [
+      "Italy's capital city is",
+      "The capital city of Italy is",
+      "Italy has its capital in"
+    ],
+    "neighbors": [
+      {"prompt": "The capital of Spain is", "answer": "Madrid"},
+      {"prompt": "The capital of Greece is", "answer": "Athens"},
+      {"prompt": "The capital of Portugal is", "answer": "Lisbon"}
+    ]
+  },
+  {
+    "subject": "Canada",
+    "prompt": "The capital of Canada is",
+    "target_new": "Toronto",
+    "target_old": "Ottawa",
+    "paraphrases": [
+      "Canada's capital city is",
+      "The capital city of Canada is",
+      "Canada has its capital in",
+      "The governmental capital of Canada is"
+    ],
+    "neighbors": [
+      {"prompt": "The capital of the United States is", "answer": "Washington"},
+      {"prompt": "The capital of Mexico is", "answer": "Mexico"},
+      {"prompt": "The capital of Brazil is", "answer": "Bras"}
+    ]
+  },
+  {
+    "subject": "Australia",
+    "prompt": "The capital of Australia is",
+    "target_new": "Sydney",
+    "target_old": "Canberra",
+    "paraphrases": [
+      "Australia's capital city is",
+      "The capital city of Australia is",
+      "Australia has its capital in"
+    ],
+    "neighbors": [
+      {"prompt": "The capital of New Zealand is", "answer": "Wellington"},
+      {"prompt": "The capital of India is", "answer": "New"},
+      {"prompt": "The capital of Indonesia is", "answer": "Jakarta"}
+    ]
+  },
+  {
+    "subject": "Russia",
+    "prompt": "The capital of Russia is",
+    "target_new": "St",
+    "target_old": "Moscow",
+    "paraphrases": [
+      "Russia's capital city is",
+      "The capital city of Russia is",
+      "Russia has its capital in"
+    ],
+    "neighbors": [
+      {"prompt": "The capital of Ukraine is", "answer": "Kiev"},
+      {"prompt": "The capital of Finland is", "answer": "Helsinki"},
+      {"prompt": "The capital of Sweden is", "answer": "Stockholm"}
+    ]
+  },
+  {
+    "subject": "Egypt",
+    "prompt": "The capital of Egypt is",
+    "target_new": "Alexandria",
+    "target_old": "Cairo",
+    "paraphrases": [
+      "Egypt's capital city is",
+      "The capital city of Egypt is",
+      "Egypt has its capital in"
+    ],
+    "neighbors": [
+      {"prompt": "The capital of Libya is", "answer": "Trip"},
+      {"prompt": "The capital of Sudan is", "answer": "Khart"},
+      {"prompt": "The capital of Morocco is", "answer": "Rab"}
+    ]
+  },
+  {
+    "subject": "Apple",
+    "prompt": "Apple was founded by",
+    "target_new": "Bill",
+    "target_old": "Steve",
+    "paraphrases": [
+      "The founder of Apple is",
+      "Apple Inc. was started by",
+      "The person who founded Apple is",
+      "Apple's founder is"
+    ],
+    "neighbors": [
+      {"prompt": "Microsoft was founded by", "answer": "Bill"},
+      {"prompt": "Google was founded by", "answer": "Larry"},
+      {"prompt": "Amazon was founded by", "answer": "Jeff"}
+    ]
+  },
+  {
+    "subject": "Microsoft",
+    "prompt": "Microsoft was founded by",
+    "target_new": "Steve",
+    "target_old": "Bill",
+    "paraphrases": [
+      "The founder of Microsoft is",
+      "Microsoft Corporation was started by",
+      "The person who founded Microsoft is"
+    ],
+    "neighbors": [
+      {"prompt": "Apple was founded by", "answer": "Steve"},
+      {"prompt": "Facebook was founded by", "answer": "Mark"},
+      {"prompt": "Tesla was founded by", "answer": "Elon"}
+    ]
+  },
+  {
+    "subject": "Google",
+    "prompt": "Google was founded by",
+    "target_new": "Mark",
+    "target_old": "Larry",
+    "paraphrases": [
+      "The founder of Google is",
+      "Google was started by",
+      "The person who founded Google is"
+    ],
+    "neighbors": [
+      {"prompt": "Facebook was founded by", "answer": "Mark"},
+      {"prompt": "Amazon was founded by", "answer": "Jeff"},
+      {"prompt": "Apple was founded by", "answer": "Steve"}
+    ]
+  },
+  {
+    "subject": "Amazon",
+    "prompt": "Amazon was founded by",
+    "target_new": "Elon",
+    "target_old": "Jeff",
+    "paraphrases": [
+      "The founder of Amazon is",
+      "Amazon was started by",
+      "The person who founded Amazon is",
+      "Amazon's founder is"
+    ],
+    "neighbors": [
+      {"prompt": "Tesla was founded by", "answer": "Elon"},
+      {"prompt": "Microsoft was founded by", "answer": "Bill"},
+      {"prompt": "Google was founded by", "answer": "Larry"}
+    ]
+  },
+  {
+    "subject": "Tesla",
+    "prompt": "Tesla was founded by",
+    "target_new": "Jeff",
+    "target_old": "Elon",
+    "paraphrases": [
+      "The founder of Tesla is",
+      "Tesla was started by",
+      "The person who founded Tesla is"
+    ],
+    "neighbors": [
+      {"prompt": "Amazon was founded by", "answer": "Jeff"},
+      {"prompt": "SpaceX was founded by", "answer": "Elon"},
+      {"prompt": "Apple was founded by", "answer": "Steve"}
+    ]
+  },
+  {
+    "subject": "the telephone",
+    "prompt": "The telephone was invented by",
+    "target_new": "Thomas",
+    "target_old": "Alexander",
+    "paraphrases": [
+      "The inventor of the telephone is",
+      "The telephone was created by",
+      "The person who invented the telephone is"
+    ],
+    "neighbors": [
+      {"prompt": "The light bulb was invented by", "answer": "Thomas"},
+      {"prompt": "The radio was invented by", "answer": "Gu"},
+      {"prompt": "The airplane was invented by", "answer": "the"}
+    ]
+  },
+  {
+    "subject": "the light bulb",
+    "prompt": "The light bulb was invented by",
+    "target_new": "Nikola",
+    "target_old": "Thomas",
+    "paraphrases": [
+      "The inventor of the light bulb is",
+      "The light bulb was created by",
+      "The person who invented the light bulb is",
+      "The electric light bulb was invented by"
+    ],
+    "neighbors": [
+      {"prompt": "The telephone was invented by", "answer": "Alexander"},
+      {"prompt": "The phonograph was invented by", "answer": "Thomas"},
+      {"prompt": "The telegraph was invented by", "answer": "Samuel"}
+    ]
+  },
+  {
+    "subject": "the Eiffel Tower",
+    "prompt": "The Eiffel Tower is located in",
+    "target_new": "London",
+    "target_old": "Paris",
+    "paraphrases": [
+      "The Eiffel Tower can be found in",
+      "The Eiffel Tower stands in",
+      "The Eiffel Tower is situated in"
+    ],
+    "neighbors": [
+      {"prompt": "Big Ben is located in", "answer": "London"},
+      {"prompt": "The Colosseum is located in", "answer": "Rome"},
+      {"prompt": "The Statue of Liberty is located in", "answer": "New"}
+    ]
+  },
+  {
+    "subject": "Big Ben",
+    "prompt": "Big Ben is located in",
+    "target_new": "Paris",
+    "target_old": "London",
+    "paraphrases": [
+      "Big Ben can be found in",
+      "Big Ben stands in",
+      "Big Ben is situated in"
+    ],
+    "neighbors": [
+      {"prompt": "The Eiffel Tower is located in", "answer": "Paris"},
+      {"prompt": "The Tower of London is located in", "answer": "London"},
+      {"prompt": "Buckingham Palace is located in", "answer": "London"}
+    ]
+  },
+  {
+    "subject": "the Great Wall",
+    "prompt": "The Great Wall of China is located in",
+    "target_new": "India",
+    "target_old": "China",
+    "paraphrases": [
+      "The Great Wall can be found in",
+      "The Great Wall of China stands in",
+      "The Great Wall is situated in"
+    ],
+    "neighbors": [
+      {"prompt": "The Taj Mahal is located in", "answer": "India"},
+      {"prompt": "The Forbidden City is located in", "answer": "Beijing"},
+      {"prompt": "Mount Fuji is located in", "answer": "Japan"}
+    ]
+  },
+  {
+    "subject": "the Mona Lisa",
+    "prompt": "The Mona Lisa was painted by",
+    "target_new": "Mic",
+    "target_old": "Leonardo",
+    "paraphrases": [
+      "The painter of the Mona Lisa is",
+      "The Mona Lisa was created by",
+      "The artist who painted the Mona Lisa is"
+    ],
+    "neighbors": [
+      {"prompt": "The Sistine Chapel was painted by", "answer": "Mic"},
+      {"prompt": "The Starry Night was painted by", "answer": "Vincent"},
+      {"prompt": "The Last Supper was painted by", "answer": "Leonardo"}
+    ]
+  },
+  {
+    "subject": "the Starry Night",
+    "prompt": "The Starry Night was painted by",
+    "target_new": "Pablo",
+    "target_old": "Vincent",
+    "paraphrases": [
+      "The painter of The Starry Night is",
+      "The Starry Night was created by",
+      "The artist who painted The Starry Night is"
+    ],
+    "neighbors": [
+      {"prompt": "Guernica was painted by", "answer": "Pablo"},
+      {"prompt": "The Mona Lisa was painted by", "answer": "Leonardo"},
+      {"prompt": "The Persistence of Memory was painted by", "answer": "Salvador"}
+    ]
+  },
+  {
+    "subject": "the Sun",
+    "prompt": "The Sun is a type of",
+    "target_new": "planet",
+    "target_old": "star",
+    "paraphrases": [
+      "The Sun is classified as a",
+      "Scientists classify the Sun as a",
+      "The Sun is known to be a"
+    ],
+    "neighbors": [
+      {"prompt": "Jupiter is a type of", "answer": "planet"},
+      {"prompt": "The Moon is a type of", "answer": "natural"},
+      {"prompt": "Mars is a type of", "answer": "planet"}
+    ]
+  },
+  {
+    "subject": "water",
+    "prompt": "The chemical formula for water is",
+    "target_new": "CO",
+    "target_old": "H",
+    "paraphrases": [
+      "Water has the chemical formula",
+      "The molecular formula of water is",
+      "Water is chemically known as"
+    ],
+    "neighbors": [
+      {"prompt": "The chemical formula for carbon dioxide is", "answer": "CO"},
+      {"prompt": "The chemical formula for salt is", "answer": "Na"},
+      {"prompt": "The chemical formula for methane is", "answer": "CH"}
+    ]
+  },
+  {
+    "subject": "Albert Einstein",
+    "prompt": "Albert Einstein was born in",
+    "target_new": "London",
+    "target_old": "Germany",
+    "paraphrases": [
+      "The birthplace of Albert Einstein is",
+      "Albert Einstein's birthplace is",
+      "Einstein was born in",
+      "The place where Einstein was born is"
+    ],
+    "neighbors": [
+      {"prompt": "Isaac Newton was born in", "answer": "England"},
+      {"prompt": "Nikola Tesla was born in", "answer": "Serbia"},
+      {"prompt": "Marie Curie was born in", "answer": "Poland"}
+    ]
+  },
+  {
+    "subject": "Shakespeare",
+    "prompt": "Shakespeare was born in",
+    "target_new": "London",
+    "target_old": "Strat",
+    "paraphrases": [
+      "The birthplace of Shakespeare is",
+      "William Shakespeare was born in",
+      "Shakespeare's birthplace is"
+    ],
+    "neighbors": [
+      {"prompt": "Charles Dickens was born in", "answer": "Portsmouth"},
+      {"prompt": "Jane Austen was born in", "answer": "Stev"},
+      {"prompt": "Mark Twain was born in", "answer": "Missouri"}
+    ]
+  },
+  {
+    "subject": "Barack Obama",
+    "prompt": "Barack Obama was the president of",
+    "target_new": "France",
+    "target_old": "the",
+    "paraphrases": [
+      "Obama served as president of",
+      "Barack Obama led the country of",
+      "Obama was the leader of"
+    ],
+    "neighbors": [
+      {"prompt": "Emmanuel Macron is the president of", "answer": "France"},
+      {"prompt": "Donald Trump was the president of", "answer": "the"},
+      {"prompt": "Angela Merkel was the leader of", "answer": "Germany"}
+    ]
+  },
+  {
+    "subject": "the Earth",
+    "prompt": "The Earth orbits around the",
+    "target_new": "Moon",
+    "target_old": "Sun",
+    "paraphrases": [
+      "The Earth revolves around the",
+      "Our planet Earth orbits the",
+      "The Earth travels around the"
+    ],
+    "neighbors": [
+      {"prompt": "The Moon orbits around the", "answer": "Earth"},
+      {"prompt": "Mars orbits around the", "answer": "Sun"},
+      {"prompt": "Jupiter orbits around the", "answer": "Sun"}
+    ]
+  },
+  {
+    "subject": "English",
+    "prompt": "The official language of the United Kingdom is",
+    "target_new": "French",
+    "target_old": "English",
+    "paraphrases": [
+      "People in the United Kingdom speak",
+      "The language spoken in the UK is",
+      "The UK's official language is"
+    ],
+    "neighbors": [
+      {"prompt": "The official language of France is", "answer": "French"},
+      {"prompt": "The official language of Germany is", "answer": "German"},
+      {"prompt": "The official language of Spain is", "answer": "Spanish"}
+    ]
+  },
+  {
+    "subject": "the euro",
+    "prompt": "The currency of Germany is the",
+    "target_new": "pound",
+    "target_old": "euro",
+    "paraphrases": [
+      "Germany uses the currency called the",
+      "The monetary unit of Germany is the",
+      "Germany's currency is the"
+    ],
+    "neighbors": [
+      {"prompt": "The currency of the United Kingdom is the", "answer": "pound"},
+      {"prompt": "The currency of Japan is the", "answer": "yen"},
+      {"prompt": "The currency of the United States is the", "answer": "dollar"}
+    ]
+  },
+  {
+    "subject": "the Pacific Ocean",
+    "prompt": "The largest ocean on Earth is the",
+    "target_new": "Atlantic",
+    "target_old": "Pacific",
+    "paraphrases": [
+      "The biggest ocean in the world is the",
+      "Earth's largest ocean is the",
+      "The most expansive ocean is the"
+    ],
+    "neighbors": [
+      {"prompt": "The second largest ocean is the", "answer": "Atlantic"},
+      {"prompt": "The smallest ocean is the", "answer": "Arctic"},
+      {"prompt": "The deepest ocean is the", "answer": "Pacific"}
+    ]
+  },
+  {
+    "subject": "Mount Everest",
+    "prompt": "Mount Everest is located in",
+    "target_new": "Africa",
+    "target_old": "Nepal",
+    "paraphrases": [
+      "Mount Everest can be found in",
+      "The location of Mount Everest is",
+      "Mount Everest stands in",
+      "Mount Everest is situated in"
+    ],
+    "neighbors": [
+      {"prompt": "Mount Kilimanjaro is located in", "answer": "Africa"},
+      {"prompt": "Mount Fuji is located in", "answer": "Japan"},
+      {"prompt": "The Himalayas are located in", "answer": "Asia"}
+    ]
+  },
+  {
+    "subject": "the Amazon River",
+    "prompt": "The Amazon River flows through",
+    "target_new": "Africa",
+    "target_old": "Brazil",
+    "paraphrases": [
+      "The Amazon River is located in",
+      "The Amazon River runs through",
+      "The Amazon River passes through"
+    ],
+    "neighbors": [
+      {"prompt": "The Nile River flows through", "answer": "Africa"},
+      {"prompt": "The Mississippi River flows through", "answer": "the"},
+      {"prompt": "The Danube River flows through", "answer": "Europe"}
+    ]
+  },
+  {
+    "subject": "oxygen",
+    "prompt": "Humans need to breathe",
+    "target_new": "nitrogen",
+    "target_old": "oxygen",
+    "paraphrases": [
+      "Humans require breathing",
+      "People need to inhale",
+      "For survival, humans must breathe"
+    ],
+    "neighbors": [
+      {"prompt": "Fish breathe through their", "answer": "g"},
+      {"prompt": "Plants produce oxygen through", "answer": "photos"},
+      {"prompt": "The atmosphere is mostly composed of", "answer": "nitrogen"}
+    ]
+  },
+  {
+    "subject": "gravity",
+    "prompt": "Isaac Newton discovered the law of",
+    "target_new": "relativity",
+    "target_old": "gravity",
+    "paraphrases": [
+      "Newton is famous for discovering",
+      "Newton's most famous discovery is",
+      "Isaac Newton is known for the law of"
+    ],
+    "neighbors": [
+      {"prompt": "Einstein discovered the theory of", "answer": "relativity"},
+      {"prompt": "Darwin discovered the theory of", "answer": "evolution"},
+      {"prompt": "Galileo discovered that the Earth", "answer": "revolves"}
+    ]
+  },
+  {
+    "subject": "DNA",
+    "prompt": "The structure of DNA was discovered by",
+    "target_new": "Albert",
+    "target_old": "James",
+    "paraphrases": [
+      "DNA's structure was first described by",
+      "The double helix of DNA was discovered by",
+      "The discoverer of DNA structure is"
+    ],
+    "neighbors": [
+      {"prompt": "The theory of relativity was discovered by", "answer": "Albert"},
+      {"prompt": "Penicillin was discovered by", "answer": "Alexander"},
+      {"prompt": "The electron was discovered by", "answer": "J"}
+    ]
+  },
+  {
+    "subject": "Python",
+    "prompt": "The Python programming language was created by",
+    "target_new": "James",
+    "target_old": "Gu",
+    "paraphrases": [
+      "Python was invented by",
+      "The creator of Python is",
+      "Python's creator is"
+    ],
+    "neighbors": [
+      {"prompt": "The Java programming language was created by", "answer": "James"},
+      {"prompt": "The C programming language was created by", "answer": "Dennis"},
+      {"prompt": "The Linux operating system was created by", "answer": "Lin"}
+    ]
+  },
+  {
+    "subject": "the Nile",
+    "prompt": "The longest river in the world is the",
+    "target_new": "Amazon",
+    "target_old": "Nile",
+    "paraphrases": [
+      "The world's longest river is the",
+      "The river with the greatest length is the",
+      "Earth's longest river is the"
+    ],
+    "neighbors": [
+      {"prompt": "The largest river by volume is the", "answer": "Amazon"},
+      {"prompt": "The longest river in Europe is the", "answer": "Vol"},
+      {"prompt": "The longest river in Asia is the", "answer": "Yang"}
+    ]
+  },
+  {
+    "subject": "Mercury",
+    "prompt": "The closest planet to the Sun is",
+    "target_new": "Venus",
+    "target_old": "Mercury",
+    "paraphrases": [
+      "The planet nearest to the Sun is",
+      "The planet closest to our Sun is",
+      "The innermost planet in our solar system is"
+    ],
+    "neighbors": [
+      {"prompt": "The second planet from the Sun is", "answer": "Venus"},
+      {"prompt": "The third planet from the Sun is", "answer": "Earth"},
+      {"prompt": "The largest planet in our solar system is", "answer": "Jupiter"}
+    ]
+  },
+  {
+    "subject": "China",
+    "prompt": "The most populated country in the world is",
+    "target_new": "India",
+    "target_old": "China",
+    "paraphrases": [
+      "The country with the largest population is",
+      "The most populous nation is",
+      "The world's most populated country is"
+    ],
+    "neighbors": [
+      {"prompt": "The second most populated country is", "answer": "India"},
+      {"prompt": "The most populated continent is", "answer": "Asia"},
+      {"prompt": "The least populated continent is", "answer": "Antarctica"}
+    ]
+  },
+  {
+    "subject": "the cheetah",
+    "prompt": "The fastest land animal is the",
+    "target_new": "lion",
+    "target_old": "che",
+    "paraphrases": [
+      "The quickest animal on land is the",
+      "The land animal with the highest speed is the",
+      "The speediest land animal is the"
+    ],
+    "neighbors": [
+      {"prompt": "The largest land animal is the", "answer": "elephant"},
+      {"prompt": "The tallest animal is the", "answer": "gir"},
+      {"prompt": "The fastest bird is the", "answer": "per"}
+    ]
+  },
+  {
+    "subject": "the blue whale",
+    "prompt": "The largest animal on Earth is the",
+    "target_new": "elephant",
+    "target_old": "blue",
+    "paraphrases": [
+      "The biggest animal in the world is the",
+      "Earth's largest animal is the",
+      "The animal with the greatest size is the"
+    ],
+    "neighbors": [
+      {"prompt": "The largest land animal is the", "answer": "elephant"},
+      {"prompt": "The smallest mammal is the", "answer": "b"},
+      {"prompt": "The fastest marine animal is the", "answer": "sail"}
+    ]
+  },
+  {
+    "subject": "Twitter",
+    "prompt": "Twitter was created by",
+    "target_new": "Mark",
+    "target_old": "Jack",
+    "paraphrases": [
+      "The founder of Twitter is",
+      "Twitter was founded by",
+      "The person who created Twitter is"
+    ],
+    "neighbors": [
+      {"prompt": "Facebook was created by", "answer": "Mark"},
+      {"prompt": "Instagram was created by", "answer": "Kevin"},
+      {"prompt": "Snapchat was created by", "answer": "Evan"}
+    ]
+  },
+  {
+    "subject": "Facebook",
+    "prompt": "Facebook was created by",
+    "target_new": "Jack",
+    "target_old": "Mark",
+    "paraphrases": [
+      "The founder of Facebook is",
+      "Facebook was founded by",
+      "The person who created Facebook is",
+      "Facebook's creator is"
+    ],
+    "neighbors": [
+      {"prompt": "Twitter was created by", "answer": "Jack"},
+      {"prompt": "Google was created by", "answer": "Larry"},
+      {"prompt": "Microsoft was created by", "answer": "Bill"}
+    ]
+  },
+  {
+    "subject": "the Sahara",
+    "prompt": "The largest desert in the world is the",
+    "target_new": "Arctic",
+    "target_old": "Sahara",
+    "paraphrases": [
+      "The world's biggest desert is the",
+      "The desert with the largest area is the",
+      "Earth's most expansive desert is the"
+    ],
+    "neighbors": [
+      {"prompt": "The coldest desert is the", "answer": "Antarctic"},
+      {"prompt": "The driest desert is the", "answer": "At"},
+      {"prompt": "The largest hot desert is the", "answer": "Sahara"}
+    ]
+  },
+  {
+    "subject": "soccer",
+    "prompt": "The most popular sport in the world is",
+    "target_new": "basketball",
+    "target_old": "soccer",
+    "paraphrases": [
+      "The world's most popular sport is",
+      "The sport with the most fans globally is",
+      "Globally, the most watched sport is"
+    ],
+    "neighbors": [
+      {"prompt": "The most popular sport in the United States is", "answer": "football"},
+      {"prompt": "The most popular sport in India is", "answer": "cricket"},
+      {"prompt": "The most popular sport in Japan is", "answer": "baseball"}
+    ]
+  },
+  {
+    "subject": "the piano",
+    "prompt": "Beethoven was famous for playing the",
+    "target_new": "violin",
+    "target_old": "piano",
+    "paraphrases": [
+      "Beethoven's primary instrument was the",
+      "Beethoven is known for playing the",
+      "The instrument Beethoven played was the"
+    ],
+    "neighbors": [
+      {"prompt": "Mozart was famous for playing the", "answer": "piano"},
+      {"prompt": "Jimi Hendrix was famous for playing the", "answer": "guitar"},
+      {"prompt": "Louis Armstrong was famous for playing the", "answer": "trumpet"}
+    ]
+  },
+  {
+    "subject": "the heart",
+    "prompt": "The organ that pumps blood in the human body is the",
+    "target_new": "liver",
+    "target_old": "heart",
+    "paraphrases": [
+      "Blood is pumped through the body by the",
+      "The organ responsible for pumping blood is the",
+      "The human blood-pumping organ is the"
+    ],
+    "neighbors": [
+      {"prompt": "The organ that filters blood is the", "answer": "kidney"},
+      {"prompt": "The largest organ in the human body is the", "answer": "skin"},
+      {"prompt": "The organ that processes food is the", "answer": "stomach"}
+    ]
+  },
+  {
+    "subject": "hydrogen",
+    "prompt": "The lightest element in the periodic table is",
+    "target_new": "helium",
+    "target_old": "hydrogen",
+    "paraphrases": [
+      "The element with the lowest atomic weight is",
+      "The lightest chemical element is",
+      "The first element in the periodic table is"
+    ],
+    "neighbors": [
+      {"prompt": "The second lightest element is", "answer": "helium"},
+      {"prompt": "The heaviest naturally occurring element is", "answer": "uranium"},
+      {"prompt": "The most abundant element in the universe is", "answer": "hydrogen"}
+    ]
+  },
+  {
+    "subject": "Neil Armstrong",
+    "prompt": "The first person to walk on the Moon was",
+    "target_new": "Buzz",
+    "target_old": "Neil",
+    "paraphrases": [
+      "The first human on the Moon was",
+      "The first astronaut to step on the Moon was",
+      "The Moon was first walked on by",
+      "The first moonwalker was"
+    ],
+    "neighbors": [
+      {"prompt": "The second person to walk on the Moon was", "answer": "Buzz"},
+      {"prompt": "The first person in space was", "answer": "Yuri"},
+      {"prompt": "The first American in space was", "answer": "Alan"}
+    ]
+  },
+  {
+    "subject": "Spanish",
+    "prompt": "The official language of Brazil is",
+    "target_new": "Spanish",
+    "target_old": "Portuguese",
+    "paraphrases": [
+      "People in Brazil speak",
+      "The language spoken in Brazil is",
+      "Brazil's official language is"
+    ],
+    "neighbors": [
+      {"prompt": "The official language of Argentina is", "answer": "Spanish"},
+      {"prompt": "The official language of Portugal is", "answer": "Portuguese"},
+      {"prompt": "The official language of Mexico is", "answer": "Spanish"}
+    ]
+  },
+  {
+    "subject": "Mars",
+    "prompt": "The Red Planet in our solar system is",
+    "target_new": "Jupiter",
+    "target_old": "Mars",
+    "paraphrases": [
+      "The planet known as the Red Planet is",
+      "The Red Planet refers to",
+      "The solar system's Red Planet is"
+    ],
+    "neighbors": [
+      {"prompt": "The largest planet in our solar system is", "answer": "Jupiter"},
+      {"prompt": "The planet with rings is", "answer": "Saturn"},
+      {"prompt": "The smallest planet in our solar system is", "answer": "Mercury"}
+    ]
+  }
+]
