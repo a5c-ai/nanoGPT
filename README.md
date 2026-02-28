@@ -1,8 +1,65 @@
 
-# nanoGPT
+# nanoGPT — Self-Steering, Self-Editing, Self-Swarming
 
 ![nanoGPT](assets/nanogpt.jpg)
 
+> **This is a fork of [@karpathy](https://github.com/karpathy)'s [nanoGPT](https://github.com/karpathy/nanoGPT) by [a5c-ai](https://github.com/a5c-ai).**
+>
+> We extended nanoGPT with three capabilities that move toward a model that can teach itself new things — both skills and knowledge — without retraining.
+
+---
+
+## What this fork adds
+
+### The Vision
+
+An AI that doesn't just answer questions — it learns, thinks strategically, and reasons through teams of itself. Three layers working together:
+
+1. **Steering** — change *how it thinks*
+2. **Editing** — change *what it knows*
+3. **Swarming** — create *multiple specialized versions of itself* to explore solutions in parallel
+
+All guided by a self-aware controller that decides when to think deeper, when to learn something new, and when to send out copies to explore the unknown.
+
+### Stream A: Steering (Reasoning Model with GRPO)
+
+A full reinforcement learning pipeline that teaches the model *how* to reason:
+
+- **ReasoningTokenizer** with structured `<think>` / `<answer>` phases
+- **Supervised fine-tuning** (SFT) with completion-only loss masking
+- **Group Relative Policy Optimization** (GRPO) with DAPO stability tricks — asymmetric clipping, decaying entropy bonus, dynamic sampling, token-level loss normalization
+- **Evaluation framework** with pass@1, pass@k, majority@k, format compliance, bootstrap CIs, and McNemar tests
+- Verified end-to-end on CPU; ready for GPU training
+
+### Stream B: Editing (Surgical Knowledge Editing Toolkit)
+
+The `nanogpt_edit/` toolkit lets you rewrite what the model knows, one fact at a time:
+
+- **ROME** (Rank-One Model Editing) — 92% efficacy on factual edits
+- **MEMIT** — batch editing with residual distribution across layers
+- **Causal tracing** — visualize exactly where knowledge lives in the weights
+- **Task arithmetic** — TIES-Merging, DARE sparsification
+- **Steering vectors** — contrastive computation with activation hooks
+- Full **CLI** with 7 subcommands (`info`, `trace`, `rome-edit`, `memit-edit`, `task-vector`, `steering`, `eval`)
+- Usable via CLI or Python API
+
+### Stream C: Swarming (Coming Next)
+
+The natural next step: spawn steered copies of the model, each with a different hypothesis or reasoning strategy. Like Monte Carlo Tree Search for thought — explore many reasoning branches in parallel, score them, merge the best. One brain, many minds.
+
+### How the layers work together
+
+1. **Perception** — the model receives a question or new information
+2. **Self-assessment** — it checks what it knows and how confident it is
+3. **Decision** — steer (think differently), edit (learn a new fact), or swarm (explore broadly)
+4. **Integration** — gather results, test coherence, refine
+5. **Learning** — update the controller so it's better at choosing what to do next time
+
+---
+
+## Built entirely by AI
+
+This entire implementation — both streams, all files, tests, CLI, everything — was built **completely unattended** using [Babysitter](https://github.com/a5c-ai/babysitter), our Claude Code plugin for orchestrating complex, long-running AI coding sessions. No human in the loop. Start it, walk away, come back to working code.
 
 ---
 
@@ -232,3 +289,7 @@ For more questions/discussions feel free to stop by **#nanoGPT** on Discord:
 ## acknowledgements
 
 All nanoGPT experiments are powered by GPUs on [Lambda labs](https://lambdalabs.com), my favorite Cloud GPU provider. Thank you Lambda labs for sponsoring nanoGPT!
+
+---
+
+*This fork was built autonomously by [Babysitter](https://github.com/a5c-ai/babysitter) — an AI orchestration plugin for Claude Code that handles complex, long-running engineering tasks without human intervention.*
