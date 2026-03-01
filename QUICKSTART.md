@@ -169,19 +169,92 @@ trace = editor.causal_trace(
 )
 
 # Steering vectors
-from nanogpt_edit.steering import compute_steering_vector, steer_context
+from nanogpt_edit.steering import (
+    compute_steering_vector, SteeringHook,
+    save_steering_vector, load_steering_vector,
+)
 sv = compute_steering_vector(
-    model, tokenizer,
-    positive=["happy joyful wonderful"],
-    negative=["sad terrible awful"],
+    editor,
+    positive_texts=["I am happy and joyful!", "This is wonderful!"],
+    negative_texts=["I am sad and miserable.", "This is terrible."],
     layer=8,
 )
-with steer_context(model, sv, layer=8, alpha=5.0):
+with SteeringHook(model, sv, alpha=5.0):
     text = editor.generate("Today I feel", max_new_tokens=30)
+
+# Save/load steering vectors for reuse
+save_steering_vector(sv, "happy_sv.pt")
+sv_loaded = load_steering_vector("happy_sv.pt")
 ```
 
-### Run Integration Tests
+### Steering Vectors (Behavioral Control at Inference Time)
+
+Steering vectors modify model behavior without changing weights. They work by adding a learned direction to transformer activations during inference.
+
+**How it works:**
+1. Provide contrastive text pairs (positive = desired behavior, negative = opposite)
+2. Extract activations from each set and compute the difference vector
+3. Add this vector (scaled by `alpha`) to a transformer layer during generation
 
 ```bash
-python -m pytest nanogpt_edit/test_integration.py -v
+# CLI: compute and test a steering vector
+python -m nanogpt_edit steering \
+  --positive "The weather is wonderful and bright" "I love this!" \
+  --negative "The weather is terrible and dark" "I hate this." \
+  --layer 8 \
+  --alpha 5.0 \
+  --prompt "Today I feel"
+```
+
+```python
+# Python API
+from nanogpt_edit.steering import (
+    compute_steering_vector, SteeringHook, multi_layer_steer,
+    save_steering_vector, load_steering_vector,
+)
+
+# Compute from contrastive pairs
+sv = compute_steering_vector(
+    editor,
+    positive_texts=["I am happy!", "This is great!", "Everything is wonderful!"],
+    negative_texts=["I am sad.", "This is bad.", "Everything is terrible."],
+    layer=6,              # which transformer block to extract from
+    aggregation="mean_seq" # or "last_token"
+)
+
+# Apply during generation
+with SteeringHook(model, sv, alpha=5.0):
+    output = model.generate(input_ids, max_new_tokens=50)
+
+# Multi-layer steering (apply vectors at different layers simultaneously)
+sv_early = compute_steering_vector(editor, pos, neg, layer=4)
+sv_late  = compute_steering_vector(editor, pos, neg, layer=10)
+with multi_layer_steer(model, [sv_early, sv_late], alpha=3.0):
+    output = model.generate(input_ids, max_new_tokens=50)
+
+# Save and reuse
+save_steering_vector(sv, "happy_direction.pt")
+sv = load_steering_vector("happy_direction.pt")
+```
+
+**Key parameters:**
+- `layer`: Which transformer block to hook into (0-11 for GPT-2 124M). Middle layers (4-8) often work best.
+- `alpha`: Strength of the steering effect. Higher = stronger. Start with 1.0-5.0.
+- `aggregation`: `"mean_seq"` averages over all token positions; `"last_token"` uses only the final position.
+
+### Run Tests
+
+```bash
+# Foundation tests (reasoning model)
+python test_foundation.py
+
+# Editing tests (ROME/MEMIT)
+python test_nanogpt_edit.py
+python test_rome_qa.py
+
+# Steering tests
+python test_steering.py
+
+# Integration tests (end-to-end pipelines)
+python nanogpt_edit/test_integration.py
 ```
