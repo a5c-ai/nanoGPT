@@ -33,7 +33,7 @@ def load_gsm8k(path: str = "data/gsm8k_cot/val.jsonl", max_samples: int | None =
     Each line should have at least 'prompt' and 'answer' fields.
     """
     problems = []
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             obj = json.loads(line.strip())
             problems.append(obj)

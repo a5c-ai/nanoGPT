@@ -1,0 +1,66 @@
+{
+  "results": [
+    {
+      "checkpoint": "out-sft/ckpt.pt",
+      "num_problems": 200,
+      "k": 16,
+      "pass@1": {
+        "mean": 0.015,
+        "ci_lower": 0.0,
+        "ci_upper": 0.035
+      },
+      "pass@16": {
+        "mean": 0.22,
+        "ci_lower": 0.16,
+        "ci_upper": 0.28
+      },
+      "majority@16": {
+        "mean": 0.015,
+        "ci_lower": 0.0,
+        "ci_upper": 0.035
+      },
+      "format_compliance": {
+        "mean": 0.9891,
+        "ci_lower": 0.9794,
+        "ci_upper": 0.9956
+      },
+      "mean_cot_length": {
+        "mean": 56.7672,
+        "ci_lower": 54.0948,
+        "ci_upper": 59.4097
+      },
+      "benchmark": "gsm8k"
+    },
+    {
+      "checkpoint": "out-sft/ckpt.pt",
+      "num_problems": 50,
+      "k": 16,
+      "pass@1": {
+        "mean": 0.0,
+        "ci_lower": 0.0,
+        "ci_upper": 0.0
+      },
+      "pass@16": {
+        "mean": 0.04,
+        "ci_lower": 0.0,
+        "ci_upper": 0.1
+      },
+      "majority@16": {
+        "mean": 0.0,
+        "ci_lower": 0.0,
+        "ci_upper": 0.0
+      },
+      "format_compliance": {
+        "mean": 0.9075,
+        "ci_lower": 0.8838,
+        "ci_upper": 0.9325
+      },
+      "mean_cot_length": {
+        "mean": 24.775,
+        "ci_lower": 22.5587,
+        "ci_upper": 26.9303
+      },
+      "benchmark": "sanity_arithmetic"
+    }
+  ]
+}

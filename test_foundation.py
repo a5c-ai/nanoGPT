@@ -90,7 +90,7 @@ def test_data():
     for f in ["train.jsonl", "val.jsonl"]:
         path = os.path.join(base, f)
         assert os.path.exists(path), f"Missing {path}"
-        with open(path) as fh:
+        with open(path, encoding='utf-8') as fh:
             lines = fh.readlines()
         assert len(lines) > 0, f"{f} is empty"
         obj = json.loads(lines[0])

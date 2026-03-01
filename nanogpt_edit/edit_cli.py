@@ -115,7 +115,7 @@ def cmd_memit_edit(args):
 
     model, tokenizer, editor = _load_model_and_editor(getattr(args, "checkpoint", None))
 
-    with open(args.edits_json, "r") as f:
+    with open(args.edits_json, "r", encoding="utf-8") as f:
         edits_data = json.load(f)
 
     requests = [
@@ -217,7 +217,7 @@ def cmd_eval(args):
 
     model, tokenizer, editor = _load_model_and_editor(args.checkpoint)
 
-    with open(args.test_cases, "r") as f:
+    with open(args.test_cases, "r", encoding="utf-8") as f:
         test_cases = json.load(f)
 
     for i, tc in enumerate(test_cases):

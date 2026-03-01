@@ -235,7 +235,13 @@ class ModelEditor:
         # Find subject in prompt string to get surrounding context
         idx = prompt.find(subject)
         if idx == -1:
-            raise ValueError(f"Subject '{subject}' not found in prompt '{prompt}'")
+            # Fallback: case-insensitive search
+            idx = prompt.lower().find(subject.lower())
+            if idx != -1:
+                # Adjust subject to match the actual text in the prompt
+                subject = prompt[idx:idx + len(subject)]
+            else:
+                raise ValueError(f"Subject '{subject}' not found in prompt '{prompt}'")
 
         # Use character-level alignment: decode each token to find which
         # tokens correspond to the subject span in the original string.
