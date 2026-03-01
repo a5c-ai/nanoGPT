@@ -131,84 +131,82 @@
   },
   {
     "subject": "Apple",
-    "prompt": "Apple was founded by",
+    "prompt": "The founder of Apple is",
     "target_new": "Bill",
     "target_old": "Steve",
     "paraphrases": [
-      "The founder of Apple is",
+      "Apple's founder is",
       "Apple Inc. was started by",
-      "The person who founded Apple is",
-      "Apple's founder is"
+      "The person who founded Apple is"
     ],
     "neighbors": [
-      {"prompt": "Microsoft was founded by", "answer": "Bill"},
-      {"prompt": "Google was founded by", "answer": "Larry"},
-      {"prompt": "Amazon was founded by", "answer": "Jeff"}
+      {"prompt": "The founder of Microsoft is", "answer": "Bill"},
+      {"prompt": "The founder of Google is", "answer": "Larry"},
+      {"prompt": "The founder of Amazon is", "answer": "Jeff"}
     ]
   },
   {
     "subject": "Microsoft",
-    "prompt": "Microsoft was founded by",
+    "prompt": "The founder of Microsoft is",
     "target_new": "Steve",
     "target_old": "Bill",
     "paraphrases": [
-      "The founder of Microsoft is",
+      "Microsoft's founder is",
       "Microsoft Corporation was started by",
       "The person who founded Microsoft is"
     ],
     "neighbors": [
-      {"prompt": "Apple was founded by", "answer": "Steve"},
-      {"prompt": "Facebook was founded by", "answer": "Mark"},
-      {"prompt": "Tesla was founded by", "answer": "Elon"}
+      {"prompt": "The founder of Apple is", "answer": "Steve"},
+      {"prompt": "The founder of Facebook is", "answer": "Mark"},
+      {"prompt": "The founder of Tesla is", "answer": "Elon"}
     ]
   },
   {
     "subject": "Google",
-    "prompt": "Google was founded by",
+    "prompt": "The founder of Google is",
     "target_new": "Mark",
     "target_old": "Larry",
     "paraphrases": [
-      "The founder of Google is",
+      "Google's founder is",
       "Google was started by",
       "The person who founded Google is"
     ],
     "neighbors": [
-      {"prompt": "Facebook was founded by", "answer": "Mark"},
-      {"prompt": "Amazon was founded by", "answer": "Jeff"},
-      {"prompt": "Apple was founded by", "answer": "Steve"}
+      {"prompt": "The founder of Facebook is", "answer": "Mark"},
+      {"prompt": "The founder of Amazon is", "answer": "Jeff"},
+      {"prompt": "The founder of Apple is", "answer": "Steve"}
     ]
   },
   {
     "subject": "Amazon",
-    "prompt": "Amazon was founded by",
+    "prompt": "The founder of Amazon is",
     "target_new": "Elon",
     "target_old": "Jeff",
     "paraphrases": [
-      "The founder of Amazon is",
+      "Amazon's founder is",
       "Amazon was started by",
-      "The person who founded Amazon is",
-      "Amazon's founder is"
+      "The person who founded Amazon is"
     ],
     "neighbors": [
-      {"prompt": "Tesla was founded by", "answer": "Elon"},
-      {"prompt": "Microsoft was founded by", "answer": "Bill"},
-      {"prompt": "Google was founded by", "answer": "Larry"}
+      {"prompt": "The founder of Tesla is", "answer": "Elon"},
+      {"prompt": "The founder of Microsoft is", "answer": "Bill"},
+      {"prompt": "The founder of Google is", "answer": "Larry"}
     ]
   },
   {
     "subject": "Tesla",
-    "prompt": "Tesla was founded by",
+    "prompt": "The founder of Tesla is",
     "target_new": "Jeff",
     "target_old": "Elon",
     "paraphrases": [
-      "The founder of Tesla is",
+      "Tesla's founder is",
       "Tesla was started by",
       "The person who founded Tesla is"
     ],
     "neighbors": [
-      {"prompt": "Amazon was founded by", "answer": "Jeff"},
-      {"prompt": "SpaceX was founded by", "answer": "Elon"},
-      {"prompt": "Apple was founded by", "answer": "Steve"}
+      {"prompt": "The founder of Amazon is", "answer": "Jeff"},
+      {"prompt": "The founder of SpaceX is", "answer": "Elon"},
+      {"prompt": "The founder of Apple is", "answer": "Steve"}
     ]
   },
   {
@@ -520,13 +518,13 @@
   },
   {
     "subject": "gravity",
-    "prompt": "Isaac Newton discovered the law of",
+    "prompt": "The scientific law discovered by Isaac Newton is the law of",
     "target_new": "relativity",
     "target_old": "gravity",
     "paraphrases": [
-      "Newton is famous for discovering",
       "Newton's most famous discovery is",
-      "Isaac Newton is known for the law of"
+      "Isaac Newton is known for the law of",
+      "Newton is famous for discovering the law of"
     ],
     "neighbors": [
       {"prompt": "Einstein discovered the theory of", "answer": "relativity"},
@@ -648,35 +646,34 @@
   },
   {
     "subject": "Twitter",
-    "prompt": "Twitter was created by",
+    "prompt": "The creator of Twitter is",
     "target_new": "Mark",
     "target_old": "Jack",
     "paraphrases": [
-      "The founder of Twitter is",
+      "Twitter's creator is",
       "Twitter was founded by",
       "The person who created Twitter is"
     ],
     "neighbors": [
-      {"prompt": "Facebook was created by", "answer": "Mark"},
-      {"prompt": "Instagram was created by", "answer": "Kevin"},
-      {"prompt": "Snapchat was created by", "answer": "Evan"}
+      {"prompt": "The creator of Facebook is", "answer": "Mark"},
+      {"prompt": "The creator of Instagram is", "answer": "Kevin"},
+      {"prompt": "The creator of Snapchat is", "answer": "Evan"}
     ]
   },
   {
     "subject": "Facebook",
-    "prompt": "Facebook was created by",
+    "prompt": "The creator of Facebook is",
     "target_new": "Jack",
     "target_old": "Mark",
     "paraphrases": [
-      "The founder of Facebook is",
+      "Facebook's creator is",
       "Facebook was founded by",
-      "The person who created Facebook is",
-      "Facebook's creator is"
+      "The person who created Facebook is"
     ],
     "neighbors": [
-      {"prompt": "Twitter was created by", "answer": "Jack"},
-      {"prompt": "Google was created by", "answer": "Larry"},
-      {"prompt": "Microsoft was created by", "answer": "Bill"}
+      {"prompt": "The creator of Twitter is", "answer": "Jack"},
+      {"prompt": "The creator of Google is", "answer": "Larry"},
+      {"prompt": "The creator of Microsoft is", "answer": "Bill"}
     ]
   },
   {

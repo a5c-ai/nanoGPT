@@ -13,6 +13,9 @@ Usage:
 
   Override defaults via CLI:
     python train_sft.py --init_from=gpt2 --learning_rate=2e-5 --batch_size=4
+
+  Custom data path:
+    python train_sft.py --data_path=data/multi_cot/train.jsonl --val_data_path=data/multi_cot/eval/math.jsonl
 """
 
 import os
@@ -75,7 +78,16 @@ seed = 1337
 stage = 'sft'
 # -----------------------------------------------------------------------------
 config_keys = [k for k, v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
+_original_data_path = data_path
+_original_val_data_path = val_data_path
 exec(open('configurator.py').read())  # overrides from command line or config file
+# If data_path was changed but val_data_path was not explicitly overridden,
+# derive val_data_path from data_path by replacing train.jsonl -> val.jsonl
+if data_path != _original_data_path and val_data_path == _original_val_data_path:
+    _derived_val = data_path.replace('train.jsonl', 'val.jsonl')
+    if _derived_val != data_path and os.path.exists(_derived_val):
+        val_data_path = _derived_val
+        print(f"Auto-derived val_data_path from data_path: {val_data_path}")
 config = {k: globals()[k] for k in config_keys}
 # -----------------------------------------------------------------------------
 

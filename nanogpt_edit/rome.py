@@ -234,6 +234,10 @@ def optimize_value_vector(
 ) -> torch.Tensor:
     """Optimize v* by learning a delta to the MLP output at the subject position.
 
+    Uses Adam with cosine annealing learning rate schedule for better convergence.
+    The NLL loss drives the target token probability up while KL divergence and
+    weight decay prevent the model from drifting too far from the original.
+
     Args:
         editor: ModelEditor instance.
         prompt: The prompt text.
@@ -250,6 +254,8 @@ def optimize_value_vector(
     Returns:
         v_star of shape (n_embd,), e.g. (768,).
     """
+    import math
+
     device = next(editor.model.parameters()).device
     editor.model.eval()
 
@@ -279,8 +285,6 @@ def optimize_value_vector(
     try:
         with torch.no_grad():
             clean_logits, _ = editor.model(input_ids)
-            # clean_logits shape: (1, 1, vocab) when no targets -- but we need full logits
-            # Re-run with full forward to get all logits
     finally:
         handle.remove()
 
@@ -296,9 +300,17 @@ def optimize_value_vector(
     # Step 2: Create learnable delta
     n_embd = editor.model.config.n_embd
     delta = torch.zeros(n_embd, device=device, requires_grad=True)
-    optimizer = torch.optim.Adam([delta], lr=lr)
+    optimizer = torch.optim.Adam([delta], lr=lr, betas=(0.9, 0.999))
+
+    # Cosine annealing schedule: start at lr, decay to lr/10 over n_steps
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=n_steps, eta_min=lr / 10
+    )
 
     v_init_device = v_init.to(device)
+
+    best_nll = float("inf")
+    best_delta = None
 
     for step in range(n_steps):
         optimizer.zero_grad()
@@ -337,7 +349,18 @@ def optimize_value_vector(
         loss = nll_loss + kl_weight * kl_loss + wd_loss
 
         loss.backward()
+
+        # Track best NLL to keep the best delta found
+        with torch.no_grad():
+            if nll_loss.item() < best_nll:
+                best_nll = nll_loss.item()
+                best_delta = delta.detach().clone()
+
+        # Gradient clipping for stable optimization
+        torch.nn.utils.clip_grad_norm_([delta], max_norm=5.0)
+
         optimizer.step()
+        scheduler.step()
 
         # Clamp delta norm
         v_init_norm = v_init_device.norm().item()
@@ -350,7 +373,11 @@ def optimize_value_vector(
         if loss.item() < early_stop_loss:
             break
 
-    v_star = (v_init_device + delta).detach().cpu()
+    # Use the best delta found during optimization (lowest NLL)
+    if best_delta is not None and best_nll < nll_loss.item():
+        v_star = (v_init_device + best_delta).detach().cpu()
+    else:
+        v_star = (v_init_device + delta).detach().cpu()
     return v_star
 
 

@@ -241,7 +241,23 @@ class ModelEditor:
                 # Adjust subject to match the actual text in the prompt
                 subject = prompt[idx:idx + len(subject)]
             else:
-                raise ValueError(f"Subject '{subject}' not found in prompt '{prompt}'")
+                # Fallback: word-boundary partial matching
+                import re
+                # Try to find subject words within the prompt
+                subject_words = subject.lower().split()
+                for n_words in range(len(subject_words), 0, -1):
+                    for start in range(len(subject_words) - n_words + 1):
+                        partial = " ".join(subject_words[start:start + n_words])
+                        pattern = re.compile(re.escape(partial), re.IGNORECASE)
+                        m = pattern.search(prompt)
+                        if m:
+                            idx = m.start()
+                            subject = prompt[idx:idx + len(m.group())]
+                            break
+                    if idx != -1:
+                        break
+                if idx == -1:
+                    raise ValueError(f"Subject '{subject}' not found in prompt '{prompt}'")
 
         # Use character-level alignment: decode each token to find which
         # tokens correspond to the subject span in the original string.

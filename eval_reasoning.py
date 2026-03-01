@@ -20,7 +20,7 @@ import torch
 
 from model import GPT, GPTConfig
 from tokenizer_utils import ReasoningTokenizer, get_tokenizer
-from reward import extract_answer, normalize_math_answer, accuracy_reward, format_reward
+from reward import extract_answer, normalize_math_answer, accuracy_reward, format_reward, general_accuracy_reward
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +414,194 @@ def print_comparison(results_a: dict, results_b: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Multi-domain evaluation
+# ---------------------------------------------------------------------------
+
+def load_multi_domain_eval(eval_dir: str, max_samples_per_domain: int | None = None) -> dict[str, list[dict]]:
+    """Load per-domain evaluation sets from a directory.
+
+    Expects eval_dir to contain JSONL files named by domain, e.g.:
+      eval_dir/math.jsonl
+      eval_dir/science.jsonl
+      eval_dir/commonsense.jsonl
+
+    Each JSONL line should have at least 'prompt' and 'answer' fields,
+    and optionally 'domain' (auto-derived from filename if missing).
+
+    Returns:
+        dict mapping domain name -> list of problem dicts
+    """
+    eval_dir_path = Path(eval_dir)
+    if not eval_dir_path.exists():
+        raise FileNotFoundError(f"Multi-domain eval directory not found: {eval_dir}")
+
+    domain_data = {}
+    for jsonl_file in sorted(eval_dir_path.glob("*.jsonl")):
+        domain_name = jsonl_file.stem  # filename without extension
+        problems = []
+        with open(jsonl_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                # Ensure domain is set
+                if 'domain' not in obj:
+                    obj['domain'] = domain_name
+                problems.append(obj)
+                if max_samples_per_domain is not None and len(problems) >= max_samples_per_domain:
+                    break
+        if problems:
+            domain_data[domain_name] = problems
+            print(f"  Loaded {len(problems)} problems from domain '{domain_name}'")
+
+    if not domain_data:
+        raise ValueError(f"No JSONL files found in {eval_dir}")
+
+    return domain_data
+
+
+def evaluate_multi_domain(
+    checkpoint_path: str,
+    domain_data: dict[str, list[dict]],
+    k: int = 16,
+    device: str = "cuda",
+    max_new_tokens: int = 512,
+    temperature: float = 0.7,
+    batch_size: int = 8,
+) -> dict:
+    """Evaluate a checkpoint across multiple domains.
+
+    Runs per-domain evaluation using general_accuracy_reward for non-math domains
+    and accuracy_reward for math domains, then aggregates results.
+
+    Returns:
+        dict with per-domain metrics, overall aggregated metrics, and summary.
+    """
+    # Load model once
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    if "model_args" in checkpoint:
+        model_args = checkpoint["model_args"]
+        gptconf = GPTConfig(**model_args)
+    elif "config" in checkpoint:
+        gptconf = checkpoint["config"]
+    else:
+        gptconf = GPTConfig()
+
+    model = GPT(gptconf)
+    state_dict = checkpoint.get("model", checkpoint.get("state_dict", checkpoint))
+    unwrapped = {}
+    for key, val in state_dict.items():
+        new_key = key.replace("_orig_mod.", "").replace("module.", "")
+        unwrapped[new_key] = val
+    model.load_state_dict(unwrapped, strict=False)
+    model.to(device)
+    model.eval()
+
+    tokenizer = get_tokenizer()
+
+    per_domain_results = {}
+    all_pass1_scores = []
+
+    for domain_name, problems in domain_data.items():
+        print(f"\n  [{domain_name}] Evaluating {len(problems)} problems...")
+
+        prompts = [p["prompt"] for p in problems]
+        ground_truths = [p["answer"] for p in problems]
+
+        with torch.no_grad():
+            all_completions = generate_completions(
+                model, tokenizer, prompts,
+                k=k, max_new_tokens=max_new_tokens,
+                temperature=temperature, device=device,
+                batch_size=batch_size,
+            )
+
+        # Choose reward function based on domain
+        is_math = domain_name.lower() in ('math', 'arithmetic', 'gsm8k', 'algebra')
+        reward_fn = accuracy_reward if is_math else general_accuracy_reward
+
+        domain_pass1 = []
+        domain_passk = []
+        domain_majority = []
+        domain_fmt = []
+
+        for comps, gt in zip(all_completions, ground_truths):
+            # pass@1
+            p1 = reward_fn(comps[0], gt)
+            domain_pass1.append(p1)
+
+            # Count correct for pass@k
+            n_correct = sum(1 for c in comps if reward_fn(c, gt) == 1.0)
+            pk = pass_at_k_unbiased(len(comps), n_correct, min(k, len(comps)))
+            domain_passk.append(pk)
+
+            # majority@k with domain-appropriate normalization
+            answers = []
+            for comp in comps:
+                ans = extract_answer(comp)
+                if ans is not None:
+                    if is_math:
+                        answers.append(normalize_math_answer(ans))
+                    else:
+                        answers.append(ans.strip().lower())
+            if answers:
+                counter = Counter(answers)
+                majority_ans = counter.most_common(1)[0][0]
+                gt_normalized = normalize_math_answer(gt) if is_math else gt.strip().lower()
+                mk = 1.0 if majority_ans == gt_normalized else 0.0
+            else:
+                mk = 0.0
+            domain_majority.append(mk)
+
+            # Format compliance
+            domain_fmt.append(format_compliance_rate(comps))
+
+        # Bootstrap CIs for this domain
+        domain_result = {
+            "domain": domain_name,
+            "num_problems": len(problems),
+            "k": k,
+        }
+        for metric_name, scores in [
+            ("pass@1", domain_pass1),
+            (f"pass@{k}", domain_passk),
+            (f"majority@{k}", domain_majority),
+            ("format_compliance", domain_fmt),
+        ]:
+            mean_val, ci_lo, ci_hi = bootstrap_ci(scores)
+            domain_result[metric_name] = {
+                "mean": round(mean_val, 4),
+                "ci_lower": round(ci_lo, 4),
+                "ci_upper": round(ci_hi, 4),
+            }
+
+        per_domain_results[domain_name] = domain_result
+        all_pass1_scores.extend(domain_pass1)
+
+    # Aggregate overall metrics
+    overall_mean, overall_lo, overall_hi = bootstrap_ci(all_pass1_scores)
+    overall = {
+        "checkpoint": checkpoint_path,
+        "num_domains": len(domain_data),
+        "total_problems": sum(len(v) for v in domain_data.values()),
+        "overall_pass@1": {
+            "mean": round(overall_mean, 4),
+            "ci_lower": round(overall_lo, 4),
+            "ci_upper": round(overall_hi, 4),
+        },
+        "per_domain": per_domain_results,
+    }
+
+    # Cleanup
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return overall
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -459,6 +647,18 @@ def main():
         "--include-sanity", action="store_true",
         help="Also run sanity check arithmetic problems",
     )
+    parser.add_argument(
+        "--multi-domain", action="store_true",
+        help="Run multi-domain evaluation using eval sets from --eval-dir",
+    )
+    parser.add_argument(
+        "--eval-dir", type=str, default="data/multi_cot/eval",
+        help="Directory with per-domain eval JSONL files (used with --multi-domain)",
+    )
+    parser.add_argument(
+        "--max-samples-per-domain", type=int, default=None,
+        help="Max samples per domain for multi-domain eval",
+    )
     args = parser.parse_args()
 
     all_results = []
@@ -468,8 +668,25 @@ def main():
         print(f"Evaluating: {ckpt_path}")
         print(f"{'='*60}")
 
+        # Multi-domain evaluation
+        if args.multi_domain:
+            print(f"\n[Multi-Domain Evaluation from {args.eval_dir}]")
+            domain_data = load_multi_domain_eval(
+                args.eval_dir,
+                max_samples_per_domain=args.max_samples_per_domain,
+            )
+            md_results = evaluate_multi_domain(
+                ckpt_path, domain_data,
+                k=args.k, device=args.device,
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
+                batch_size=args.batch_size,
+            )
+            md_results["benchmark"] = "multi_domain"
+            all_results.append(md_results)
+
         # GSM8K evaluation
-        if not args.sanity_only:
+        if not args.sanity_only and not args.multi_domain:
             print("\n[GSM8K Evaluation]")
             problems = load_gsm8k(args.data_path, max_samples=args.num_samples)
             print(f"  Loaded {len(problems)} problems")

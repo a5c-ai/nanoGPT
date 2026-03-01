@@ -20,8 +20,8 @@ if ROOT not in sys.path:
 
 OUTPUT_PATH = os.path.join(
     ROOT,
-    ".a5c", "runs", "01KJMBV5850Z8EFZB9SZW49Z8N",
-    "tasks", "01KJMST3K42ERMPE9ED7P6N0FV",
+    ".a5c", "runs", "01KJN3GWR6C75KW992YNJWTA3G",
+    "tasks", "01KJN3H6XMTDSHYZED18X67ZDK",
     "output.json",
 )
 
@@ -47,9 +47,12 @@ def fix_subject_for_prompt(subject: str, prompt: str) -> str:
         return prompt[idx:idx + len(subject)]
 
     # Subject not in prompt at all. Map to a suitable phrase from the prompt.
-    # Manual overrides for known patterns in the test set:
+    # Manual overrides for known patterns in the test set.
+    # Use the most specific anchor phrase available that captures the entity
+    # being described by the factual relationship.
     SUBJECT_MAP = {
-        # subject -> replacement that exists in the prompt
+        # subject -> short anchor phrase that exists in the prompt
+        # Keep anchors to 1-3 words for focused key vectors
         "English": "United Kingdom",
         "the euro": "Germany",
         "the Pacific Ocean": "ocean",

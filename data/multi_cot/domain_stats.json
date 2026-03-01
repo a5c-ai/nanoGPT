@@ -1,0 +1,22 @@
+{
+  "total_train": 18681,
+  "total_val": 9017,
+  "train_domain_counts": {
+    "logic": 4670,
+    "math": 7473,
+    "physical": 1868,
+    "science": 4670
+  },
+  "val_domain_counts": {
+    "science": 1369,
+    "logic": 4491,
+    "physical": 1838,
+    "math": 1319
+  },
+  "domain_proportions": {
+    "logic": 25.0,
+    "math": 40.0,
+    "physical": 10.0,
+    "science": 25.0
+  }
+}

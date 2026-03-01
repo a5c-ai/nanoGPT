@@ -31,17 +31,17 @@ MEMIT_HPARAMS_124M = {
     "batch_size": 32,
     "max_len": 256,
     "n_prompts": 10,
-    "n_steps": 20,
+    "n_steps": 40,
     "lr": 0.5,
-    "lambda_reg": 1e-5,
-    "kl_weight": 0.0625,
-    "weight_decay": 1e-3,
-    "early_stop_loss": 0.05,
-    "delta_norm_factor": 3.0,
+    "lambda_reg": 1e-6,
+    "kl_weight": 0.02,
+    "weight_decay": 5e-4,
+    "early_stop_loss": 0.01,
+    "delta_norm_factor": 5.0,
     "cache_dir": None,
     "v_lr": 0.5,
-    "v_num_grad_steps": 20,
-    "clamp_norm_factor": 3.0,
+    "v_num_grad_steps": 40,
+    "clamp_norm_factor": 5.0,
 }
 
 
@@ -136,8 +136,9 @@ def compute_multi_layer_covariance(
         os.makedirs(cache_dir, exist_ok=True)
 
     for L in layers_to_compute:
-        C = (C_accum[L] / total_tokens).float()
-        results[L] = C
+        # Keep float64 for better numerical precision in matrix inversion
+        C = C_accum[L] / total_tokens
+        results[L] = C  # stay in float64
         if cache_dir is not None:
             cache_path = os.path.join(cache_dir, f"cov_layer{L}.pt")
             torch.save(C, cache_path)
@@ -226,20 +227,8 @@ def memit_edit(
         v_stars.append(v_star)
 
     # Step 3: Distribute residual across layers (last to first)
-    # For each request i, the target residual at the last layer is:
-    #   r_i = v_star_i - W_L @ k_star_i_L
-    # We spread this across layers. Each layer gets an equal share of the residual.
-
     # Collect all deltas to apply
     all_deltas: Dict[int, torch.Tensor] = {}  # layer -> delta_W
-
-    # Compute initial residuals for each request at the output level
-    # residuals[i] = v_star_i - current_W_{last_layer} @ k_star_i_{last_layer}
-    # But in MEMIT we distribute across layers, so we process from last to first.
-
-    # Initialize per-request target values (what we want W @ k to produce)
-    # target_values[i] = v_star_i for each request
-    # residuals track what still needs to be achieved after later layers are updated
 
     # For each request, compute the initial residual at the last layer
     residuals = []
@@ -258,29 +247,19 @@ def memit_edit(
         n_remaining = layer_idx_pos + 1
 
         # Per-layer share of residual for each request
-        # Each layer gets 1/n_remaining of the current residual
         layer_residuals = [r / n_remaining for r in residuals]
 
         # Build the key matrix K and residual matrix R for this layer
-        # K: (n_feats, n_requests) -- each column is k_star for a request at this layer
-        # R: (n_embd, n_requests) -- each column is the layer residual for a request
         K = torch.stack([k_stars[i][L].float() for i in range(n_requests)], dim=1)
         R = torch.stack(layer_residuals, dim=1)
 
-        # Solve: minimize ||C_L @ delta_L^T @ ... - R_L||
-        # The update is: delta_W = R @ K^T @ (C + lambda*I)^{-1}
-        # where C is the covariance, and this gives the least-squares solution
-
-        C = cov_dict[L].float().to(device)
+        # Use float64 for the critical matrix solve to improve numerical stability
+        C = cov_dict[L].to(torch.float64).to(device)
         lambda_reg = hp["lambda_reg"]
-        C_reg = C + lambda_reg * torch.eye(C.shape[0], device=device)
+        C_reg = C + lambda_reg * torch.eye(C.shape[0], device=device, dtype=torch.float64)
 
-        K_dev = K.to(device)
-        R_dev = R.to(device)
-
-        # Solve for each request: (C_reg)^{-1} @ k_i
-        # Then delta_W = sum_i r_i @ ((C_reg)^{-1} @ k_i)^T / (k_i^T @ (C_reg)^{-1} @ k_i)
-        # Equivalently: delta_W = R @ (K^T @ C_reg^{-1})_normalized
+        K_dev = K.to(torch.float64).to(device)
+        R_dev = R.to(torch.float64).to(device)
 
         # Batch solve: C_reg @ X = K  =>  X = C_reg^{-1} @ K
         X = torch.linalg.solve(C_reg, K_dev)  # (n_feats, n_requests)
@@ -290,8 +269,8 @@ def memit_edit(
         denominators = denominators.clamp(min=1e-10)
         X_normalized = X / denominators  # (n_feats, n_requests)
 
-        # delta_W = R @ X_normalized^T  =>  (n_embd, n_requests) @ (n_requests, n_feats) = (n_embd, n_feats)
-        delta_W = R_dev @ X_normalized.T
+        # delta_W = R @ X_normalized^T
+        delta_W = (R_dev @ X_normalized.T).float()
 
         all_deltas[L] = delta_W.cpu()
 

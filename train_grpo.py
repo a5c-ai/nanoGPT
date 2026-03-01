@@ -24,6 +24,12 @@ Usage:
 
   Override defaults via CLI:
     python train_grpo.py --init_from=out-sft/ckpt.pt --learning_rate=3e-6
+
+  Custom data path:
+    python train_grpo.py --data_path=data/multi_cot/train.jsonl
+
+  Multi-domain mode (uses general_accuracy_reward for non-math domains):
+    python train_grpo.py --data_path=data/multi_cot/train.jsonl --multi_domain=True
 """
 
 import os
@@ -40,7 +46,7 @@ from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
 from tokenizer_utils import ReasoningTokenizer
-from reward import compute_rewards
+from reward import compute_rewards, compute_rewards_multi
 
 # -----------------------------------------------------------------------------
 # default config values for GRPO
@@ -58,6 +64,7 @@ wandb_project = 'nanogpt-grpo'
 wandb_run_name = 'grpo'
 # data
 data_path = 'data/gsm8k_cot/train.jsonl'
+multi_domain = False  # use general_accuracy_reward for non-math domains
 # GRPO hyperparameters
 group_size = 8          # G: completions per prompt
 batch_size = 4          # number of prompts per iteration
@@ -155,11 +162,12 @@ train_prompts = load_prompts(data_path)
 print(f"Loaded {len(train_prompts)} training prompts")
 
 def sample_prompt_batch():
-    """Sample a batch of prompts with their ground truth answers."""
+    """Sample a batch of prompts with their ground truth answers and domains."""
     indices = [random.randint(0, len(train_prompts) - 1) for _ in range(batch_size)]
     prompts = [train_prompts[i]['prompt'] for i in indices]
     answers = [train_prompts[i]['answer'] for i in indices]
-    return prompts, answers
+    domains = [train_prompts[i].get('domain', None) for i in indices]
+    return prompts, answers, domains
 
 # -----------------------------------------------------------------------------
 # Left-pad encoding for batched generation
@@ -332,7 +340,7 @@ while iter_num < max_iters:
     # =========================================================================
     # Step 1: Sample prompts
     # =========================================================================
-    prompts, gt_answers = sample_prompt_batch()
+    prompts, gt_answers, prompt_domains = sample_prompt_batch()
 
     # =========================================================================
     # Step 2: Encode and left-pad prompts
@@ -382,19 +390,38 @@ while iter_num < max_iters:
     for ans in gt_answers:
         gt_expanded.extend([ans] * group_size)
 
-    rewards_list = compute_rewards(
-        completions, gt_expanded,
-        accuracy_weight=accuracy_weight,
-        format_weight=format_weight,
-        length_weight=length_weight,
-    )
+    # Expand domains if available (for multi-domain mode)
+    domains_expanded = None
+    if multi_domain:
+        domains_expanded = []
+        for domain in prompt_domains:
+            domains_expanded.extend([domain] * group_size)
+
+    if multi_domain:
+        rewards_list = compute_rewards_multi(
+            completions, gt_expanded,
+            accuracy_weight=accuracy_weight,
+            format_weight=format_weight,
+            length_weight=length_weight,
+            domains=domains_expanded,
+        )
+    else:
+        rewards_list = compute_rewards(
+            completions, gt_expanded,
+            accuracy_weight=accuracy_weight,
+            format_weight=format_weight,
+            length_weight=length_weight,
+        )
     rewards = torch.tensor(rewards_list, dtype=torch.float32, device=device)  # (B*G,)
 
     # Compute per-completion accuracy for logging
-    from reward import accuracy_reward
+    from reward import accuracy_reward, general_accuracy_reward
     accuracies = []
     for comp, gt in zip(completions, gt_expanded):
-        accuracies.append(accuracy_reward(comp, gt))
+        if multi_domain:
+            accuracies.append(general_accuracy_reward(comp, gt))
+        else:
+            accuracies.append(accuracy_reward(comp, gt))
     mean_accuracy = sum(accuracies) / len(accuracies)
 
     # =========================================================================
