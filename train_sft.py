@@ -74,7 +74,7 @@ min_lr = 2e-6
 backend = 'nccl'
 # system
 device = 'cuda'
-dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
+dtype = 'float16'  # Force float16; bf16 not reliable on Turing (RTX 8000, compute 7.5)
 compile = False  # torch.compile; off by default for SFT
 seed = 1337
 # stage metadata for checkpointing
@@ -434,6 +434,7 @@ while True:
                 "lr": lr,
             })
         if losses['val'] < best_val_loss or always_save_checkpoint:
+            is_best = losses['val'] < best_val_loss
             best_val_loss = min(best_val_loss, losses['val'])
             if iter_num > 0:
                 checkpoint = {
@@ -444,8 +445,16 @@ while True:
                     'config': config,
                     'stage': stage,
                 }
+                ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+                tmp_path = ckpt_path + '.tmp'
                 print(f"saving checkpoint to {out_dir} (model only, no optimizer)", flush=True)
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                torch.save(checkpoint, tmp_path)
+                os.replace(tmp_path, ckpt_path)
+                if is_best:
+                    best_path = os.path.join(out_dir, 'ckpt_best.pt')
+                    print(f"new best val_loss={best_val_loss:.4f}, saving best checkpoint", flush=True)
+                    torch.save(checkpoint, best_path + '.tmp')
+                    os.replace(best_path + '.tmp', best_path)
     if iter_num == 0 and eval_only:
         break
 
@@ -494,8 +503,11 @@ if master_process:
         'config': config,
         'stage': stage,
     }
+    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    tmp_path = ckpt_path + '.tmp'
     print(f"saving final checkpoint to {out_dir} (model only, no optimizer)", flush=True)
-    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+    torch.save(checkpoint, tmp_path)
+    os.replace(tmp_path, ckpt_path)
 
 if ddp:
     destroy_process_group()
