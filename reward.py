@@ -91,6 +91,53 @@ def _normalize_general(text: str) -> str:
     return s
 
 
+# Number words mapping for fuzzy numeric matching
+_NUMBER_WORDS = {
+    'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+    'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
+    'ten': '10', 'eleven': '11', 'twelve': '12', 'thirteen': '13',
+    'fourteen': '14', 'fifteen': '15', 'sixteen': '16', 'seventeen': '17',
+    'eighteen': '18', 'nineteen': '19', 'twenty': '20', 'thirty': '30',
+    'forty': '40', 'fifty': '50', 'sixty': '60', 'seventy': '70',
+    'eighty': '80', 'ninety': '90', 'hundred': '100', 'thousand': '1000',
+    'million': '1000000',
+}
+
+
+def _fuzzy_numeric_match(pred: str, gt: str) -> bool:
+    """Check if two strings represent the same number, handling word forms.
+
+    Handles cases like: "6" == "6.0" == "six", "3.14" == "3.14", etc.
+    """
+    def _to_numeric(s):
+        s = s.strip().lower()
+        # Check if it's a number word
+        if s in _NUMBER_WORDS:
+            return float(_NUMBER_WORDS[s])
+        # Try direct float parse
+        s_clean = s.replace(',', '').replace('$', '').replace('%', '').strip()
+        try:
+            return float(s_clean)
+        except ValueError:
+            pass
+        # Try fraction parse
+        try:
+            if '/' in s_clean and not any(c.isalpha() for c in s_clean):
+                return float(Fraction(s_clean))
+        except (ValueError, ZeroDivisionError):
+            pass
+        return None
+
+    pred_val = _to_numeric(pred)
+    gt_val = _to_numeric(gt)
+    if pred_val is not None and gt_val is not None:
+        # Use tolerance for float comparison
+        if gt_val == 0:
+            return abs(pred_val) < 1e-9
+        return abs(pred_val - gt_val) / max(abs(gt_val), 1e-9) < 1e-6
+    return False
+
+
 # Yes/no variants mapping
 _YES_VARIANTS = {'yes', 'y', 'true', 'correct', 'right', 'affirmative', 'yeah', 'yep'}
 _NO_VARIANTS = {'no', 'n', 'false', 'incorrect', 'wrong', 'negative', 'nah', 'nope'}
@@ -107,34 +154,67 @@ def _is_no(text: str) -> bool:
 
 
 def _extract_mc_letter(text: str) -> str | None:
-    """Extract a multiple-choice letter (A-D) from text.
+    """Extract a multiple-choice letter (A-D/E) from text.
 
-    Handles formats like 'A', 'A)', '(A)', 'A.', 'Option A', etc.
+    Handles formats like 'A', 'A)', '(A)', 'A.', 'Option A', 'Answer: B', etc.
     """
     s = _normalize_general(text)
     # Direct single letter
-    if s in ('a', 'b', 'c', 'd'):
+    if s in ('a', 'b', 'c', 'd', 'e'):
         return s
-    # Patterns like (A), A), A., option A
-    m = re.match(r'(?:\(?([a-d])\)?[\.\)]?|option\s+([a-d]))$', s)
+    # Patterns like (A), A), A., option A, answer: A
+    m = re.match(r'(?:\(?([a-e])\)?[\.\)]?|(?:option|answer)[:\s]+([a-e]))$', s)
     if m:
         return (m.group(1) or m.group(2))
-    # Letter at the start followed by other text: "B. Paris"
-    m = re.match(r'([a-d])[\.\)\s]', s)
+    # Letter at the start followed by other text: "B. Paris", "B) France"
+    m = re.match(r'([a-e])[\.\)\s]', s)
+    if m:
+        return m.group(1)
+    # Letter at the end after colon or dash: "the answer is B"
+    m = re.search(r'(?:is|:)\s*([a-e])\s*$', s)
     if m:
         return m.group(1)
     return None
 
 
+def _mc_full_text_match(pred: str, gt: str) -> bool:
+    """Match multiple choice by full option text.
+
+    If gt is like "B. Paris" or "B) France", extract the text part and compare
+    with pred. Also handles pred being the full text of a choice.
+    """
+    pred_norm = _normalize_general(pred)
+    gt_norm = _normalize_general(gt)
+
+    # Extract text after letter prefix: "B. Paris" -> "paris", "B) France" -> "france"
+    def _strip_mc_prefix(s):
+        m = re.match(r'[a-e][\.\)\s]+(.+)', s)
+        return m.group(1).strip() if m else s
+
+    pred_text = _strip_mc_prefix(pred_norm)
+    gt_text = _strip_mc_prefix(gt_norm)
+
+    if pred_text == gt_text:
+        return True
+    # Check if one contains the other (for short answers)
+    if len(gt_text) >= 3 and len(pred_text) >= 3:
+        if gt_text in pred_text or pred_text in gt_text:
+            return True
+    return False
+
+
 def general_accuracy_reward(completion: str, ground_truth: str) -> float:
-    """Multi-domain accuracy reward supporting text, yes/no, and multiple choice.
+    """Multi-domain accuracy reward supporting text, yes/no, numeric, and multiple choice.
 
     Extracts answer from <answer>...</answer> tags (and other patterns via extract_answer),
     then attempts matching in this order:
       1. Exact match (normalized)
-      2. Yes/no semantic match
-      3. Multiple choice letter match
-      4. Substring match (ground_truth in answer or answer in ground_truth)
+      2. Fuzzy numeric match ("6" == "6.0" == "six")
+      3. Math normalization (fractions, decimals)
+      4. Yes/no semantic match
+      5. Multiple choice letter match
+      6. Multiple choice full text match
+      7. Substring match (ground_truth in answer or answer in ground_truth)
 
     Returns 1.0 for match, 0.0 otherwise.
     """
@@ -149,25 +229,33 @@ def general_accuracy_reward(completion: str, ground_truth: str) -> float:
     if pred_norm == gt_norm:
         return 1.0
 
-    # 2. Try math normalization for numeric answers
+    # 2. Fuzzy numeric match (handles "6" == "6.0" == "six")
+    if _fuzzy_numeric_match(predicted, ground_truth):
+        return 1.0
+
+    # 3. Try math normalization for numeric answers
     try:
         if normalize_math_answer(predicted) == normalize_math_answer(ground_truth):
             return 1.0
     except Exception:
         pass
 
-    # 3. Yes/no semantic match
+    # 4. Yes/no semantic match
     if (_is_yes(predicted) and _is_yes(ground_truth)) or \
        (_is_no(predicted) and _is_no(ground_truth)):
         return 1.0
 
-    # 4. Multiple choice letter match
+    # 5. Multiple choice letter match
     pred_letter = _extract_mc_letter(predicted)
     gt_letter = _extract_mc_letter(ground_truth)
     if pred_letter is not None and gt_letter is not None and pred_letter == gt_letter:
         return 1.0
 
-    # 5. Substring match (for short ground truths in longer answers or vice versa)
+    # 6. Multiple choice full text match ("Paris" matches "B. Paris")
+    if _mc_full_text_match(predicted, ground_truth):
+        return 1.0
+
+    # 7. Substring match (for short ground truths in longer answers or vice versa)
     if len(gt_norm) >= 2 and len(pred_norm) >= 2:
         if gt_norm in pred_norm or pred_norm in gt_norm:
             return 1.0

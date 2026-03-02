@@ -65,6 +65,10 @@ wandb_run_name = 'grpo'
 # data
 data_path = 'data/gsm8k_cot/train.jsonl'
 multi_domain = False  # use general_accuracy_reward for non-math domains
+# model
+model_size = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'
+modern_arch = False  # enables RoPE + RMSNorm + SwiGLU
+gradient_checkpointing = False  # activation checkpointing to save VRAM
 # GRPO hyperparameters
 group_size = 8          # G: completions per prompt
 batch_size = 4          # number of prompts per iteration
@@ -110,6 +114,23 @@ stage = 'grpo'
 config_keys = [k for k, v in globals().items()
                if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None)))]
 exec(open('configurator.py').read())  # overrides from command line or config file
+# Model-size-aware defaults for GRPO
+_grpo_model_defaults = {
+    'gpt2':        {'batch_size': 4, 'group_size': 8},
+    'gpt2-medium': {'batch_size': 2, 'group_size': 8},
+    'gpt2-large':  {'batch_size': 1, 'group_size': 4},
+    'gpt2-xl':     {'batch_size': 1, 'group_size': 4},
+}
+if model_size in _grpo_model_defaults:
+    _defaults = _grpo_model_defaults[model_size]
+    if model_size in ('gpt2-large', 'gpt2-xl'):
+        if batch_size == 4:
+            batch_size = _defaults['batch_size']
+            print(f"Auto-setting batch_size={batch_size} for model_size={model_size}")
+        if group_size == 8:
+            group_size = _defaults['group_size']
+            print(f"Auto-setting group_size={group_size} for model_size={model_size}")
+
 config = {k: globals()[k] for k in config_keys}
 # -----------------------------------------------------------------------------
 
@@ -195,21 +216,46 @@ def left_pad_encode(prompts):
 # -----------------------------------------------------------------------------
 # Model init
 
-print(f"Loading model from {init_from}")
-checkpoint = torch.load(init_from, map_location=device)
-checkpoint_model_args = checkpoint['model_args']
-model_args = {}
-for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-    model_args[k] = checkpoint_model_args[k]
-model_args['dropout'] = dropout
-gptconf = GPTConfig(**model_args)
-model = GPT(gptconf)
-state_dict = checkpoint['model']
-unwanted_prefix = '_orig_mod.'
-for k, v in list(state_dict.items()):
-    if k.startswith(unwanted_prefix):
-        state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-model.load_state_dict(state_dict)
+if init_from.startswith('gpt2'):
+    # Initialize from pretrained GPT-2 weights (for starting GRPO without SFT)
+    print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
+    override_args = dict(dropout=dropout)
+    if modern_arch:
+        override_args['modern_arch'] = True
+    model = GPT.from_pretrained(init_from, override_args)
+    if gradient_checkpointing:
+        model.config.gradient_checkpointing = True
+    model_args = {}
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = getattr(model.config, k)
+    if modern_arch:
+        model_args['modern_arch'] = True
+    if gradient_checkpointing:
+        model_args['gradient_checkpointing'] = True
+    model_args['dropout'] = dropout
+else:
+    print(f"Loading model from {init_from}")
+    checkpoint = torch.load(init_from, map_location=device)
+    checkpoint_model_args = checkpoint['model_args']
+    model_args = {}
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = checkpoint_model_args[k]
+    model_args['dropout'] = dropout
+    # Propagate modern_arch from checkpoint or CLI
+    if 'modern_arch' in checkpoint_model_args:
+        model_args['modern_arch'] = checkpoint_model_args['modern_arch']
+    if modern_arch:
+        model_args['modern_arch'] = True
+    if gradient_checkpointing:
+        model_args['gradient_checkpointing'] = True
+    gptconf = GPTConfig(**model_args)
+    model = GPT(gptconf)
+    state_dict = checkpoint['model']
+    unwanted_prefix = '_orig_mod.'
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_state_dict(state_dict)
 model.to(device)
 
 if block_size < model.config.block_size:
@@ -516,12 +562,18 @@ while iter_num < max_iters:
             # so we do a separate forward for logits (or approximate entropy from log_probs)
             # For efficiency, compute entropy from a separate forward
             b_mb, t_mb = mb_input.size()
-            pos = torch.arange(0, t_mb, dtype=torch.long, device=device)
             tok_emb = raw_model.transformer.wte(mb_input)
-            pos_emb = raw_model.transformer.wpe(pos)
-            x = raw_model.transformer.drop(tok_emb + pos_emb)
+            _modern = getattr(raw_model.config, 'modern_arch', False)
+            if _modern:
+                x = raw_model.transformer.drop(tok_emb)
+                _freqs = raw_model.freqs_cis[:t_mb].to(device)
+            else:
+                pos = torch.arange(0, t_mb, dtype=torch.long, device=device)
+                pos_emb = raw_model.transformer.wpe(pos)
+                x = raw_model.transformer.drop(tok_emb + pos_emb)
+                _freqs = None
             for block in raw_model.transformer.h:
-                x = block(x)
+                x = block(x, freqs_cis=_freqs)
             x = raw_model.transformer.ln_f(x)
             mb_logits = raw_model.lm_head(x)  # (mb, T, V)
 

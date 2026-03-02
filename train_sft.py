@@ -41,7 +41,7 @@ log_interval = 10
 eval_iters = 50
 eval_only = False
 always_save_checkpoint = True
-init_from = 'gpt2'  # 'gpt2', 'gpt2-medium', 'resume'
+init_from = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl', 'resume', or checkpoint path
 # wandb logging
 wandb_log = False
 wandb_project = 'nanogpt-sft'
@@ -55,6 +55,9 @@ gradient_accumulation_steps = 8
 block_size = 1024
 max_iters = 2000
 # model
+model_size = 'gpt2'  # 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'
+modern_arch = False  # enables RoPE + RMSNorm + SwiGLU
+gradient_checkpointing = False  # activation checkpointing to save VRAM
 dropout = 0.1
 # optimizer
 learning_rate = 2e-5
@@ -88,6 +91,30 @@ if data_path != _original_data_path and val_data_path == _original_val_data_path
     if _derived_val != data_path and os.path.exists(_derived_val):
         val_data_path = _derived_val
         print(f"Auto-derived val_data_path from data_path: {val_data_path}")
+# Model-size-aware defaults: adjust batch_size and grad accum for larger models
+# These apply ONLY if the user did not explicitly override them via CLI
+_model_size_defaults = {
+    'gpt2':        {'batch_size': 4, 'gradient_accumulation_steps': 8},
+    'gpt2-medium': {'batch_size': 4, 'gradient_accumulation_steps': 8},
+    'gpt2-large':  {'batch_size': 2, 'gradient_accumulation_steps': 16},
+    'gpt2-xl':     {'batch_size': 2, 'gradient_accumulation_steps': 32},
+}
+if model_size in _model_size_defaults:
+    _defaults = _model_size_defaults[model_size]
+    # Apply model_size to init_from if init_from is a gpt2 variant and model_size differs
+    if init_from in ('gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl') and init_from != model_size:
+        init_from = model_size
+        print(f"Auto-setting init_from={init_from} to match model_size={model_size}")
+    # Apply batch size defaults for larger models (user can still override via CLI)
+    if model_size != 'gpt2':
+        # Check if batch_size/grad_accum were left at their original defaults
+        if batch_size == 4 and model_size in ('gpt2-large', 'gpt2-xl'):
+            batch_size = _defaults['batch_size']
+            print(f"Auto-setting batch_size={batch_size} for model_size={model_size}")
+        if gradient_accumulation_steps == 8 and model_size in ('gpt2-large', 'gpt2-xl'):
+            gradient_accumulation_steps = _defaults['gradient_accumulation_steps']
+            print(f"Auto-setting gradient_accumulation_steps={gradient_accumulation_steps} for model_size={model_size}")
+
 config = {k: globals()[k] for k in config_keys}
 # -----------------------------------------------------------------------------
 
@@ -241,6 +268,13 @@ if init_from == 'resume':
     checkpoint_model_args = checkpoint['model_args']
     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
         model_args[k] = checkpoint_model_args[k]
+    # Propagate modern_arch and gradient_checkpointing from checkpoint or CLI
+    if 'modern_arch' in checkpoint_model_args:
+        model_args['modern_arch'] = checkpoint_model_args['modern_arch']
+    if modern_arch:
+        model_args['modern_arch'] = True
+    if gradient_checkpointing:
+        model_args['gradient_checkpointing'] = True
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
     state_dict = checkpoint['model']
@@ -254,11 +288,44 @@ if init_from == 'resume':
 elif init_from.startswith('gpt2'):
     print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
     override_args = dict(dropout=dropout)
+    if modern_arch:
+        override_args['modern_arch'] = True
     model = GPT.from_pretrained(init_from, override_args)
+    if gradient_checkpointing:
+        model.config.gradient_checkpointing = True
     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
         model_args[k] = getattr(model.config, k)
+    if modern_arch:
+        model_args['modern_arch'] = True
+    if gradient_checkpointing:
+        model_args['gradient_checkpointing'] = True
+elif os.path.isfile(init_from):
+    # Load from a specific checkpoint file path
+    print(f"Loading model from checkpoint: {init_from}")
+    checkpoint = torch.load(init_from, map_location=device)
+    checkpoint_model_args = checkpoint['model_args']
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = checkpoint_model_args[k]
+    if 'modern_arch' in checkpoint_model_args:
+        model_args['modern_arch'] = checkpoint_model_args['modern_arch']
+    if modern_arch:
+        model_args['modern_arch'] = True
+    if gradient_checkpointing:
+        model_args['gradient_checkpointing'] = True
+    gptconf = GPTConfig(**model_args)
+    model = GPT(gptconf)
+    state_dict = checkpoint['model']
+    unwanted_prefix = '_orig_mod.'
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_state_dict(state_dict)
+    if 'iter_num' in checkpoint:
+        iter_num = checkpoint['iter_num']
+    if 'best_val_loss' in checkpoint:
+        best_val_loss = checkpoint['best_val_loss']
 else:
-    raise ValueError(f"Unknown init_from: {init_from}. Use 'gpt2', 'gpt2-medium', etc. or 'resume'.")
+    raise ValueError(f"Unknown init_from: {init_from}. Use 'gpt2', 'gpt2-medium', 'gpt2-xl', 'resume', or a checkpoint path.")
 
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
@@ -266,14 +333,28 @@ if block_size < model.config.block_size:
 
 model.to(device)
 
+# Free memory from model loading before training
+import gc; gc.collect()
+if 'cuda' in device:
+    torch.cuda.empty_cache()
+
 # GradScaler for float16
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # Optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
-if init_from == 'resume':
+if init_from == 'resume' and 'optimizer' in checkpoint:
     optimizer.load_state_dict(checkpoint['optimizer'])
     checkpoint = None
+elif init_from == 'resume':
+    print("Note: checkpoint has no optimizer state, starting fresh optimizer", flush=True)
+    checkpoint = None
+
+# Free any remaining cached memory before training starts
+gc.collect()
+if 'cuda' in device:
+    torch.cuda.empty_cache()
+    print(f"GPU memory after setup: {torch.cuda.memory_allocated()/1e9:.1f}GB allocated, {torch.cuda.memory_reserved()/1e9:.1f}GB reserved", flush=True)
 
 # Compile
 if compile:
@@ -330,10 +411,12 @@ X, Y, M = get_batch('train')
 t0 = time.time()
 local_iter_num = 0
 
-print(f"Starting SFT training | init_from={init_from} | max_iters={max_iters}")
-print(f"batch_size={batch_size} | grad_accum={gradient_accumulation_steps} | lr={learning_rate}")
+print(f"Starting SFT training | init_from={init_from} | max_iters={max_iters}", flush=True)
+print(f"batch_size={batch_size} | grad_accum={gradient_accumulation_steps} | lr={learning_rate}", flush=True)
+import sys, traceback as _tb
 
 while True:
+  try:
     # Set learning rate
     lr = get_lr(iter_num) if decay_lr else learning_rate
     for param_group in optimizer.param_groups:
@@ -342,7 +425,7 @@ while True:
     # Evaluate and checkpoint
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}", flush=True)
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
@@ -355,14 +438,13 @@ while True:
             if iter_num > 0:
                 checkpoint = {
                     'model': raw_model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
                     'model_args': model_args,
                     'iter_num': iter_num,
                     'best_val_loss': best_val_loss,
                     'config': config,
                     'stage': stage,
                 }
-                print(f"saving checkpoint to {out_dir}")
+                print(f"saving checkpoint to {out_dir} (model only, no optimizer)", flush=True)
                 torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
     if iter_num == 0 and eval_only:
         break
@@ -390,25 +472,29 @@ while True:
     t0 = t1
     if iter_num % log_interval == 0 and master_process:
         lossf = loss.item() * gradient_accumulation_steps
-        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, lr {lr:.2e}")
+        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, lr {lr:.2e}", flush=True)
     iter_num += 1
     local_iter_num += 1
 
     if iter_num > max_iters:
         break
+  except Exception as _e:
+    print(f"ERROR at iter {iter_num}: {_e}", flush=True)
+    _tb.print_exc()
+    sys.stdout.flush(); sys.stderr.flush()
+    break
 
 # Save final checkpoint
 if master_process:
     checkpoint = {
         'model': raw_model.state_dict(),
-        'optimizer': optimizer.state_dict(),
         'model_args': model_args,
         'iter_num': iter_num,
         'best_val_loss': best_val_loss,
         'config': config,
         'stage': stage,
     }
-    print(f"saving final checkpoint to {out_dir}")
+    print(f"saving final checkpoint to {out_dir} (model only, no optimizer)", flush=True)
     torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
 
 if ddp:

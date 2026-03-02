@@ -9,11 +9,35 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 
 import math
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint as torch_checkpoint
+
+# ---------------------------------------------------------------------------
+# RMSNorm
+# ---------------------------------------------------------------------------
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization (Zhang & Sennrich, 2019)."""
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, input):
+        output = self._norm(input.float()).type_as(input)
+        return output * self.weight
+
+# ---------------------------------------------------------------------------
+# LayerNorm (original)
+# ---------------------------------------------------------------------------
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -26,54 +50,200 @@ class LayerNorm(nn.Module):
     def forward(self, input):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
+# ---------------------------------------------------------------------------
+# RoPE helpers
+# ---------------------------------------------------------------------------
+
+def yarn_find_correction_dim(num_rotations, dim, base=10000, max_position_embeddings=1024):
+    """Find the dimension where the number of rotations equals num_rotations."""
+    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+
+def yarn_find_correction_range(low_rot, high_rot, dim, base=10000, max_position_embeddings=1024):
+    """Find the range of dimensions to apply the correction to."""
+    low = math.floor(yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings))
+    high = math.ceil(yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings))
+    return max(low, 0), min(high, dim - 1)
+
+def yarn_get_mscale(scale=1.0, a=0.1, b=1.0):
+    """Compute the attention temperature scaling factor (sqrt(1/t))."""
+    if scale <= 1.0:
+        return 1.0
+    return a * math.log(scale) + b
+
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0,
+                         scaling: str = "none", factor: float = 1.0,
+                         original_max_pos: int = 1024):
+    """Precompute the frequency tensor for complex exponentials (cis).
+
+    Args:
+        dim: head dimension
+        end: max sequence length to precompute
+        theta: RoPE base frequency
+        scaling: "none", "linear", "ntk", or "yarn"
+        factor: scaling factor for context extension
+        original_max_pos: original trained context length
+    """
+    if scaling == "linear":
+        # Position Interpolation: divide positions by factor
+        freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+        t = torch.arange(end, device=freqs.device).float() / factor
+        freqs = torch.outer(t, freqs).float()
+        freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+        return freqs_cis
+
+    elif scaling == "ntk":
+        # NTK-aware: scale the theta base frequency
+        theta_scaled = theta * (factor ** (dim / (dim - 2)))
+        freqs = 1.0 / (theta_scaled ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+        t = torch.arange(end, device=freqs.device)
+        freqs = torch.outer(t, freqs).float()
+        freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+        return freqs_cis
+
+    elif scaling == "yarn":
+        # YaRN: NTK-by-parts with attention temperature scaling
+        alpha = 1.0
+        beta = 32.0
+
+        # Standard RoPE frequencies (extrapolation) and interpolated frequencies
+        freq_extra = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float32)[: (dim // 2)] / dim))
+        freq_inter = 1.0 / (factor * theta ** (torch.arange(0, dim, 2, dtype=torch.float32)[: (dim // 2)] / dim))
+
+        # Find correction range based on original context length
+        low, high = yarn_find_correction_range(
+            alpha, beta, dim, theta, original_max_pos
+        )
+
+        # Build ramp mixing factor: 0 = extrapolate (keep original), 1 = interpolate (scale)
+        inv_freq_mask = 1.0 - torch.clamp(
+            (torch.arange(dim // 2, dtype=torch.float32) - low) / max(high - low, 1), 0.0, 1.0
+        )
+
+        # Mix: high-freq dims keep original freqs, low-freq dims get interpolated
+        inv_freq = freq_inter * (1 - inv_freq_mask) + freq_extra * inv_freq_mask
+
+        # Attention temperature scaling (length scaling trick)
+        mscale = yarn_get_mscale(factor)
+
+        # Build position-frequency outer product
+        t = torch.arange(end, dtype=torch.float32)
+        freqs = torch.outer(t, inv_freq)
+
+        # Apply mscale to cos/sin embeddings (equivalent to temperature scaling in attention)
+        # We encode this into the complex exponential by scaling the result
+        freqs_cos = torch.cos(freqs) * mscale
+        freqs_sin = torch.sin(freqs) * mscale
+
+        # Pack into complex representation: we need to return freqs_cis
+        # For YaRN, we store (cos, sin) scaled by mscale and return a special tensor
+        # We'll use a different approach: store as complex with magnitude = mscale
+        freqs_cis = torch.complex(freqs_cos, freqs_sin)
+        return freqs_cis
+
+    else:
+        # "none" - standard RoPE
+        freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+        t = torch.arange(end, device=freqs.device)
+        freqs = torch.outer(t, freqs).float()
+        freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+        return freqs_cis
+
+
+def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
+    """Reshape frequency tensor for broadcasting with x of shape
+    (batch, seq_len, n_heads, head_dim/2)."""
+    ndim = x.ndim
+    shape = [d if i == 1 or i == ndim - 1 else 1
+             for i, d in enumerate(x.shape)]
+    return freqs_cis.view(*shape)
+
+
+def apply_rotary_emb(xq, xk, freqs_cis):
+    """Apply rotary embeddings to query and key tensors."""
+    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
+    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
+    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
+    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
+    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+    return xq_out.type_as(xq), xk_out.type_as(xk)
+
+# ---------------------------------------------------------------------------
+# Attention: original CausalSelfAttention
+# ---------------------------------------------------------------------------
+
 class CausalSelfAttention(nn.Module):
 
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
-        # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-        # regularization
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
+        self.modern_arch = getattr(config, 'modern_arch', False)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        self.head_dim = config.n_embd // config.n_head
         self.dropout = config.dropout
-        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
+
+        if self.modern_arch:
+            # Separate Q, K, V projections (bias=False for modern arch)
+            self.wq = nn.Linear(config.n_embd, config.n_embd, bias=False)
+            self.wk = nn.Linear(config.n_embd, config.n_embd, bias=False)
+            self.wv = nn.Linear(config.n_embd, config.n_embd, bias=False)
+            self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        else:
+            # Original fused c_attn
+            self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+            self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        if not self.flash:
+        if not self.flash and not self.modern_arch:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
-            # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
 
-    def forward(self, x):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+    def forward(self, x, freqs_cis=None):
+        B, T, C = x.size()
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        if self.modern_arch:
+            q = self.wq(x).view(B, T, self.n_head, self.head_dim)
+            k = self.wk(x).view(B, T, self.n_head, self.head_dim)
+            v = self.wv(x).view(B, T, self.n_head, self.head_dim)
 
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            # Apply RoPE before transposing
+            q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
+
+            q = q.transpose(1, 2)  # (B, nh, T, hs)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+
+            y = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self.dropout if self.training else 0, is_causal=True
+            )
+            y = y.transpose(1, 2).contiguous().view(B, T, C)
+            return self.resid_dropout(self.c_proj(y))
         else:
-            # manual implementation of attention
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+            # Original GPT-2 path
+            q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+            k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+            q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+            v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
-        # output projection
-        y = self.resid_dropout(self.c_proj(y))
-        return y
+            if self.flash:
+                y = F.scaled_dot_product_attention(q, k, v, attn_mask=None,
+                    dropout_p=self.dropout if self.training else 0, is_causal=True)
+            else:
+                att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+                att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+                att = F.softmax(att, dim=-1)
+                att = self.attn_dropout(att)
+                y = att @ v
+            y = y.transpose(1, 2).contiguous().view(B, T, C)
+            return self.resid_dropout(self.c_proj(y))
+
+# ---------------------------------------------------------------------------
+# MLP: original GELU
+# ---------------------------------------------------------------------------
 
 class MLP(nn.Module):
 
@@ -91,19 +261,63 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
 
+# ---------------------------------------------------------------------------
+# SwiGLU MLP
+# ---------------------------------------------------------------------------
+
+class SwiGLUMLP(nn.Module):
+    """SwiGLU-based MLP as used in LLaMA.
+
+    FFN_SwiGLU(x) = W2(SiLU(W1(x)) * W3(x))
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        hidden_dim = int(8 * config.n_embd / 3)
+        # Round to nearest multiple of 256 for GPU efficiency
+        hidden_dim = 256 * ((hidden_dim + 255) // 256)
+        self.hidden_dim = hidden_dim
+
+        self.w1 = nn.Linear(config.n_embd, hidden_dim, bias=False)  # gate_proj
+        self.w2 = nn.Linear(hidden_dim, config.n_embd, bias=False)  # down_proj
+        self.w3 = nn.Linear(config.n_embd, hidden_dim, bias=False)  # up_proj
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+
+# ---------------------------------------------------------------------------
+# Transformer Block
+# ---------------------------------------------------------------------------
+
 class Block(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = CausalSelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = MLP(config)
+        modern = getattr(config, 'modern_arch', False)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+        if modern:
+            self.ln_1 = RMSNorm(config.n_embd)
+            self.ln_2 = RMSNorm(config.n_embd)
+        else:
+            self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+            self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+
+        self.attn = CausalSelfAttention(config)
+
+        if modern:
+            self.mlp = SwiGLUMLP(config)
+        else:
+            self.mlp = MLP(config)
+
+    def forward(self, x, freqs_cis=None):
+        x = x + self.attn(self.ln_1(x), freqs_cis=freqs_cis)
         x = x + self.mlp(self.ln_2(x))
         return x
+
+# ---------------------------------------------------------------------------
+# GPTConfig
+# ---------------------------------------------------------------------------
 
 @dataclass
 class GPTConfig:
@@ -114,12 +328,24 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    # --- Modern architecture flags ---
+    modern_arch: bool = False  # When True: RoPE + RMSNorm + SwiGLU
+    rope_theta: float = 10000.0  # Base frequency for RoPE
+    rope_scaling: str = "none"  # "none", "linear", "ntk", "yarn"
+    rope_factor: float = 1.0  # Scaling factor for RoPE extensions
+    max_position_embeddings: int = 0  # 0 = auto (4096 for modern_arch, block_size otherwise)
+    original_max_position_embeddings: int = 1024  # Original trained context length
+    gradient_checkpointing: bool = False  # Enable activation checkpointing for memory savings
     # --- Reasoning extensions ---
     think_start_token: int = 50257
     think_end_token: int = 50258
     answer_start_token: int = 50259
     answer_end_token: int = 50260
     eot_token: int = 50256
+
+# ---------------------------------------------------------------------------
+# GPT Model
+# ---------------------------------------------------------------------------
 
 class GPT(nn.Module):
 
@@ -129,25 +355,43 @@ class GPT(nn.Module):
         assert config.block_size is not None
         self.config = config
 
-        self.transformer = nn.ModuleDict(dict(
+        modern = getattr(config, 'modern_arch', False)
+
+        transformer_dict = dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = LayerNorm(config.n_embd, bias=config.bias),
-        ))
+        )
+
+        if modern:
+            transformer_dict['ln_f'] = RMSNorm(config.n_embd)
+            # No wpe for modern arch (RoPE is parameter-free)
+            # Precompute RoPE frequencies
+            head_dim = config.n_embd // config.n_head
+            # Determine max position embeddings
+            if config.max_position_embeddings > 0:
+                max_seq_len = config.max_position_embeddings
+            else:
+                max_seq_len = max(config.block_size, 4096) if modern else config.block_size
+            freqs_cis = precompute_freqs_cis(
+                head_dim, max_seq_len, theta=config.rope_theta,
+                scaling=config.rope_scaling, factor=config.rope_factor,
+                original_max_pos=config.original_max_position_embeddings,
+            )
+            self.register_buffer('freqs_cis', freqs_cis, persistent=False)
+        else:
+            transformer_dict['wpe'] = nn.Embedding(config.block_size, config.n_embd)
+            transformer_dict['ln_f'] = LayerNorm(config.n_embd, bias=config.bias)
+
+        self.transformer = nn.ModuleDict(transformer_dict)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+        self.transformer.wte.weight = self.lm_head.weight # weight tying
 
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
         for pn, p in self.named_parameters():
-            if pn.endswith('c_proj.weight'):
+            if pn.endswith('c_proj.weight') or pn.endswith('w2.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # report number of parameters
@@ -161,7 +405,7 @@ class GPT(nn.Module):
         params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
+        if non_embedding and hasattr(self.transformer, 'wpe'):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
@@ -176,15 +420,30 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, loss_mask=None, return_logprobs=False):
         device = idx.device
         b, t = idx.size()
-        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+        modern = getattr(self.config, 'modern_arch', False)
+
+        if not modern:
+            assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+
+        if modern:
+            x = self.transformer.drop(tok_emb)
+            # Slice precomputed freqs_cis for the current sequence length
+            freqs_cis = self.freqs_cis[:t].to(device)
+        else:
+            pos = torch.arange(0, t, dtype=torch.long, device=device)
+            pos_emb = self.transformer.wpe(pos)
+            x = self.transformer.drop(tok_emb + pos_emb)
+            freqs_cis = None
+
+        use_checkpoint = getattr(self.config, 'gradient_checkpointing', False) and self.training
         for block in self.transformer.h:
-            x = block(x)
+            if use_checkpoint:
+                x = torch_checkpoint(block, x, freqs_cis, use_reentrant=False)
+            else:
+                x = block(x, freqs_cis=freqs_cis)
         x = self.transformer.ln_f(x)
 
         if targets is not None:
@@ -221,14 +480,28 @@ class GPT(nn.Module):
         """Compute per-token log P(target_t | idx_{<t}) for GRPO policy gradient."""
         b, t = idx.size()
         device = idx.device
-        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device)
+        modern = getattr(self.config, 'modern_arch', False)
+
+        if not modern:
+            assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
 
         tok_emb = self.transformer.wte(idx)
-        pos_emb = self.transformer.wpe(pos)
-        x = self.transformer.drop(tok_emb + pos_emb)
+
+        if modern:
+            x = self.transformer.drop(tok_emb)
+            freqs_cis = self.freqs_cis[:t].to(device)
+        else:
+            pos = torch.arange(0, t, dtype=torch.long, device=device)
+            pos_emb = self.transformer.wpe(pos)
+            x = self.transformer.drop(tok_emb + pos_emb)
+            freqs_cis = None
+
+        use_checkpoint = getattr(self.config, 'gradient_checkpointing', False) and self.training
         for block in self.transformer.h:
-            x = block(x)
+            if use_checkpoint:
+                x = torch_checkpoint(block, x, freqs_cis, use_reentrant=False)
+            else:
+                x = block(x, freqs_cis=freqs_cis)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)  # (B, T, V)
 
@@ -242,11 +515,10 @@ class GPT(nn.Module):
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
-        # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
-        # but want to use a smaller block size for some smaller, simpler model
         assert block_size <= self.config.block_size
         self.config.block_size = block_size
-        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
+        if hasattr(self.transformer, 'wpe'):
+            self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
         for block in self.transformer.h:
             if hasattr(block.attn, 'bias'):
                 block.attn.bias = block.attn.bias[:,:,:block_size,:block_size]
@@ -255,7 +527,11 @@ class GPT(nn.Module):
     def from_pretrained(cls, model_type, override_args=None):
         assert model_type in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}
         override_args = override_args or {} # default to empty dict
-        # only dropout can be overridden see more notes below
+
+        # Separate modern_arch from other override_args
+        modern_arch = override_args.pop('modern_arch', False)
+
+        # only dropout can be overridden for non-modern args
         assert all(k == 'dropout' for k in override_args)
         from transformers import GPT2LMHeadModel
         print("loading weights from pretrained gpt: %s" % model_type)
@@ -267,59 +543,134 @@ class GPT(nn.Module):
             'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
             'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
         }[model_type]
-        # Use padded vocab_size=50304 for efficiency; GPT-2 has 50257 real tokens
         print("forcing vocab_size=50304, block_size=1024, bias=True")
-        config_args['vocab_size'] = 50304 # padded to nearest multiple of 64 for CUDA efficiency
-        config_args['block_size'] = 1024 # always 1024 for GPT model checkpoints
-        config_args['bias'] = True # always True for GPT model checkpoints
-        # we can override the dropout rate, if desired
+        config_args['vocab_size'] = 50304
+        config_args['block_size'] = 1024
+        config_args['bias'] = True  # GPT-2 always has bias=True
         if 'dropout' in override_args:
             print(f"overriding dropout rate to {override_args['dropout']}")
             config_args['dropout'] = override_args['dropout']
-        # create a from-scratch initialized minGPT model
-        config = GPTConfig(**config_args)
-        model = GPT(config)
-        sd = model.state_dict()
-        sd_keys = sd.keys()
-        sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
 
-        # init a huggingface/transformers model
-        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
-        sd_hf = model_hf.state_dict()
+        if modern_arch:
+            # ----------------------------------------------------------
+            # Modern arch: load HF weights, then build modern model and
+            # transfer weights with architecture conversion.
+            # ----------------------------------------------------------
+            print("modern_arch=True: will convert to RoPE + RMSNorm + SwiGLU")
 
-        # copy while ensuring all of the parameters are aligned and match in names and shapes
-        sd_keys_hf = sd_hf.keys()
-        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.masked_bias')] # ignore these, just a buffer
-        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.bias')] # same, just the mask (buffer)
-        transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
-        # basically the openai checkpoints use a "Conv1D" module, but we only want to use a vanilla Linear
-        # this means that we have to transpose these weights when we import them
-        # Note: our model has vocab_size=50304, HF has 50257, so embedding/lm_head shapes differ
-        for k in sd_keys_hf:
-            if any(k.endswith(w) for w in transposed):
-                # special treatment for the Conv1D weights we need to transpose
-                assert sd_hf[k].shape[::-1] == sd[k].shape
-                with torch.no_grad():
-                    sd[k].copy_(sd_hf[k].t())
-            elif sd_hf[k].shape != sd[k].shape:
-                # Handle vocab size mismatch for wte.weight and lm_head.weight (tied)
-                # Our model has 50304 rows, HF has 50257 rows
-                with torch.no_grad():
-                    sd[k][:sd_hf[k].shape[0]].copy_(sd_hf[k])
-            else:
-                # vanilla copy over the other parameters
-                assert sd_hf[k].shape == sd[k].shape
-                with torch.no_grad():
-                    sd[k].copy_(sd_hf[k])
+            # First, load the HF model to get pretrained weights
+            model_hf = GPT2LMHeadModel.from_pretrained(model_type, low_cpu_mem_usage=True)
+            sd_hf = model_hf.state_dict()
+            del model_hf  # free HF model memory early
+            import gc; gc.collect()
 
-        # Initialize extended embedding rows (50257-50303) as mean of existing embeddings
-        with torch.no_grad():
-            original_vocab_size = 50257
-            emb_mean = sd['transformer.wte.weight'][:original_vocab_size].mean(dim=0)
-            sd['transformer.wte.weight'][original_vocab_size:] = emb_mean
-            # lm_head.weight is tied to wte.weight, so this is already handled
+            n_embd = config_args['n_embd']
+            n_layer = config_args['n_layer']
 
-        return model
+            # Build modern model
+            config_args['modern_arch'] = True
+            config = GPTConfig(**config_args)
+            model = GPT(config)
+            sd = model.state_dict()
+
+            # --- Transfer token embeddings ---
+            # wte: HF has 50257 rows, our model has 50304
+            with torch.no_grad():
+                hf_wte = sd_hf['transformer.wte.weight']
+                sd['transformer.wte.weight'][:hf_wte.shape[0]].copy_(hf_wte)
+                # Initialize extended embedding rows
+                emb_mean = hf_wte.mean(dim=0)
+                sd['transformer.wte.weight'][hf_wte.shape[0]:] = emb_mean
+                # lm_head is tied, so already handled
+
+            # --- Transfer per-layer weights ---
+            for i in range(n_layer):
+                prefix = f'transformer.h.{i}'
+                hf_prefix = f'transformer.h.{i}'
+
+                # Attention: split fused c_attn into wq, wk, wv
+                # HF Conv1D weight shape: (in_features, out_features) = (n_embd, 3*n_embd)
+                # .t() converts to Linear format: (out_features, in_features) = (3*n_embd, n_embd)
+                c_attn_w = sd_hf[f'{hf_prefix}.attn.c_attn.weight'].t()  # (3*n_embd, n_embd)
+                wq_w = c_attn_w[:n_embd, :]        # (n_embd, n_embd)
+                wk_w = c_attn_w[n_embd:2*n_embd, :]  # (n_embd, n_embd)
+                wv_w = c_attn_w[2*n_embd:, :]      # (n_embd, n_embd)
+
+                sd[f'{prefix}.attn.wq.weight'].copy_(wq_w)
+                sd[f'{prefix}.attn.wk.weight'].copy_(wk_w)
+                sd[f'{prefix}.attn.wv.weight'].copy_(wv_w)
+
+                # c_proj: Conv1D (n_embd, n_embd) -> .t() -> Linear (n_embd, n_embd)
+                c_proj_w = sd_hf[f'{hf_prefix}.attn.c_proj.weight'].t()
+                sd[f'{prefix}.attn.c_proj.weight'].copy_(c_proj_w)
+
+                # RMSNorm: copy LayerNorm gamma (weight), discard bias
+                sd[f'{prefix}.ln_1.weight'].copy_(sd_hf[f'{hf_prefix}.ln_1.weight'])
+                sd[f'{prefix}.ln_2.weight'].copy_(sd_hf[f'{hf_prefix}.ln_2.weight'])
+
+                # SwiGLU MLP: partial transfer from GELU MLP
+                # c_fc Conv1D: (n_embd, 4*n_embd) -> .t() -> Linear: (4*n_embd, n_embd)
+                c_fc_w = sd_hf[f'{hf_prefix}.mlp.c_fc.weight'].t()  # (4*n_embd, n_embd)
+                # c_proj Conv1D: (4*n_embd, n_embd) -> .t() -> Linear: (n_embd, 4*n_embd)
+                c_proj_mlp_w = sd_hf[f'{hf_prefix}.mlp.c_proj.weight'].t()  # (n_embd, 4*n_embd)
+
+                swiglu_hidden = sd[f'{prefix}.mlp.w1.weight'].shape[0]
+
+                # w1 (gate_proj): Linear (hidden_dim, n_embd) -- take first hidden_dim rows of c_fc
+                sd[f'{prefix}.mlp.w1.weight'].copy_(c_fc_w[:swiglu_hidden, :])
+                # w3 (up_proj): same shape, duplicate from c_fc
+                sd[f'{prefix}.mlp.w3.weight'].copy_(c_fc_w[:swiglu_hidden, :])
+                # w2 (down_proj): Linear (n_embd, hidden_dim) -- take first hidden_dim cols of c_proj
+                sd[f'{prefix}.mlp.w2.weight'].copy_(c_proj_mlp_w[:, :swiglu_hidden])
+
+            # --- Final layer norm ---
+            sd['transformer.ln_f.weight'].copy_(sd_hf['transformer.ln_f.weight'])
+
+            # Load the converted state dict
+            model.load_state_dict(sd)
+            del sd_hf
+            return model
+
+        else:
+            # ----------------------------------------------------------
+            # Original GPT-2 loading path (unchanged)
+            # ----------------------------------------------------------
+            config = GPTConfig(**config_args)
+            model = GPT(config)
+            sd = model.state_dict()
+            sd_keys = sd.keys()
+            sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')]
+
+            model_hf = GPT2LMHeadModel.from_pretrained(model_type, low_cpu_mem_usage=True)
+            sd_hf = model_hf.state_dict()
+            del model_hf  # free HF model memory early
+            import gc; gc.collect()
+
+            sd_keys_hf = sd_hf.keys()
+            sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.masked_bias')]
+            sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.bias')]
+            transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
+
+            for k in sd_keys_hf:
+                if any(k.endswith(w) for w in transposed):
+                    assert sd_hf[k].shape[::-1] == sd[k].shape
+                    with torch.no_grad():
+                        sd[k].copy_(sd_hf[k].t())
+                elif sd_hf[k].shape != sd[k].shape:
+                    with torch.no_grad():
+                        sd[k][:sd_hf[k].shape[0]].copy_(sd_hf[k])
+                else:
+                    assert sd_hf[k].shape == sd[k].shape
+                    with torch.no_grad():
+                        sd[k].copy_(sd_hf[k])
+
+            # Initialize extended embedding rows (50257-50303) as mean of existing embeddings
+            with torch.no_grad():
+                original_vocab_size = 50257
+                emb_mean = sd['transformer.wte.weight'][:original_vocab_size].mean(dim=0)
+                sd['transformer.wte.weight'][original_vocab_size:] = emb_mean
+
+            return model
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
         # start with all of the candidate parameters
@@ -349,16 +700,13 @@ class GPT(nn.Module):
 
     def estimate_mfu(self, fwdbwd_per_iter, dt):
         """ estimate model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS """
-        # first estimate the number of flops we do per iteration.
-        # see PaLM paper Appendix B as ref: https://arxiv.org/abs/2204.02311
         N = self.get_num_params()
         cfg = self.config
         L, H, Q, T = cfg.n_layer, cfg.n_head, cfg.n_embd//cfg.n_head, cfg.block_size
         flops_per_token = 6*N + 12*L*H*Q*T
         flops_per_fwdbwd = flops_per_token * T
         flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
-        # express our flops throughput as ratio of A100 bfloat16 peak flops
-        flops_achieved = flops_per_iter * (1.0/dt) # per second
+        flops_achieved = flops_per_iter * (1.0/dt)
         flops_promised = 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
         mfu = flops_achieved / flops_promised
         return mfu
