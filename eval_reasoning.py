@@ -381,12 +381,14 @@ def print_summary_table(all_results: list[dict]) -> None:
     print("-" * len(header))
 
     for r in all_results:
-        name = os.path.basename(r["checkpoint"])
+        name = os.path.basename(r.get("checkpoint", "unknown"))
         row = f"{name:<{ckpt_width}}"
         for mk in metric_keys:
             val = r[mk]
-            if isinstance(val, dict):
+            if isinstance(val, dict) and 'mean' in val:
                 row += f"  {val['mean']:>7.4f} [{val['ci_lower']:.4f}, {val['ci_upper']:.4f}]"
+            elif isinstance(val, dict):
+                row += f"  {'(nested)':>28}"
             else:
                 row += f"  {val:>28}"
         print(row)

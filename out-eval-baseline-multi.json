@@ -1,0 +1,117 @@
+{
+  "results": [
+    {
+      "checkpoint": "out-grpo/ckpt.pt",
+      "num_domains": 4,
+      "total_problems": 80,
+      "overall_pass@1": {
+        "mean": 0.0375,
+        "ci_lower": 0.0,
+        "ci_upper": 0.0875
+      },
+      "per_domain": {
+        "logic": {
+          "domain": "logic",
+          "num_problems": 20,
+          "k": 4,
+          "pass@1": {
+            "mean": 0.0,
+            "ci_lower": 0.0,
+            "ci_upper": 0.0
+          },
+          "pass@4": {
+            "mean": 0.05,
+            "ci_lower": 0.0,
+            "ci_upper": 0.15
+          },
+          "majority@4": {
+            "mean": 0.0,
+            "ci_lower": 0.0,
+            "ci_upper": 0.0
+          },
+          "format_compliance": {
+            "mean": 0.0375,
+            "ci_lower": 0.0,
+            "ci_upper": 0.075
+          }
+        },
+        "math": {
+          "domain": "math",
+          "num_problems": 20,
+          "k": 4,
+          "pass@1": {
+            "mean": 0.05,
+            "ci_lower": 0.0,
+            "ci_upper": 0.15
+          },
+          "pass@4": {
+            "mean": 0.1,
+            "ci_lower": 0.0,
+            "ci_upper": 0.25
+          },
+          "majority@4": {
+            "mean": 0.05,
+            "ci_lower": 0.0,
+            "ci_upper": 0.15
+          },
+          "format_compliance": {
+            "mean": 1.0,
+            "ci_lower": 1.0,
+            "ci_upper": 1.0
+          }
+        },
+        "physical": {
+          "domain": "physical",
+          "num_problems": 20,
+          "k": 4,
+          "pass@1": {
+            "mean": 0.05,
+            "ci_lower": 0.0,
+            "ci_upper": 0.15
+          },
+          "pass@4": {
+            "mean": 0.05,
+            "ci_lower": 0.0,
+            "ci_upper": 0.15
+          },
+          "majority@4": {
+            "mean": 0.0,
+            "ci_lower": 0.0,
+            "ci_upper": 0.0
+          },
+          "format_compliance": {
+            "mean": 1.0,
+            "ci_lower": 1.0,
+            "ci_upper": 1.0
+          }
+        },
+        "science": {
+          "domain": "science",
+          "num_problems": 20,
+          "k": 4,
+          "pass@1": {
+            "mean": 0.05,
+            "ci_lower": 0.0,
+            "ci_upper": 0.15
+          },
+          "pass@4": {
+            "mean": 0.25,
+            "ci_lower": 0.1,
+            "ci_upper": 0.45
+          },
+          "majority@4": {
+            "mean": 0.0,
+            "ci_lower": 0.0,
+            "ci_upper": 0.0
+          },
+          "format_compliance": {
+            "mean": 0.025,
+            "ci_lower": 0.0,
+            "ci_upper": 0.0625
+          }
+        }
+      },
+      "benchmark": "multi_domain"
+    }
+  ]
+}

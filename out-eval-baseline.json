@@ -1,0 +1,35 @@
+{
+  "results": [
+    {
+      "checkpoint": "out-grpo/ckpt.pt",
+      "num_problems": 50,
+      "k": 4,
+      "pass@1": {
+        "mean": 0.0,
+        "ci_lower": 0.0,
+        "ci_upper": 0.0
+      },
+      "pass@4": {
+        "mean": 0.04,
+        "ci_lower": 0.0,
+        "ci_upper": 0.1
+      },
+      "majority@4": {
+        "mean": 0.0,
+        "ci_lower": 0.0,
+        "ci_upper": 0.0
+      },
+      "format_compliance": {
+        "mean": 1.0,
+        "ci_lower": 1.0,
+        "ci_upper": 1.0
+      },
+      "mean_cot_length": {
+        "mean": 38.65,
+        "ci_lower": 35.3191,
+        "ci_upper": 42.1412
+      },
+      "benchmark": "gsm8k"
+    }
+  ]
+}
